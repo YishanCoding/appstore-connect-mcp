@@ -1,5 +1,10 @@
 import { AppStoreConnectClient } from '../api-client/index.js';
 import { CustomerReviewsResponse, ReviewInfo } from './types.js';
+import { AxiosError } from 'axios';
+
+function isNotFound(e: unknown): boolean {
+    return (e instanceof AxiosError && e.response?.status === 404);
+}
 
 export class ReviewManager {
     constructor(private client: AppStoreConnectClient) {}
@@ -20,23 +25,29 @@ export class ReviewManager {
         if (options.filterRating) params['filter[rating]'] = options.filterRating;
         if (options.filterTerritory) params['filter[territory]'] = options.filterTerritory;
 
-        const response = await this.client.get<CustomerReviewsResponse>(
+        const items = await this.client.followPages<CustomerReviewsResponse>(
             `/apps/${appId}/customerReviews`,
-            params
+            params,
+            options.limit ?? 100
         );
-        return response.data.map((r) => this.mapToInfo(r));
+        return items.map((r) => this.mapToInfo(r));
     }
 
     public async respondToReview(reviewId: string, responseBody: string): Promise<void> {
-        const existing = await this.client.get<any>(
-            `/customerReviews/${reviewId}/response`
-        ).catch(() => null);
+        let existingResponseId: string | undefined;
+        try {
+            const existing = await this.client.get<any>(`/customerReviews/${reviewId}/response`);
+            existingResponseId = existing?.data?.id;
+        } catch (e) {
+            if (!isNotFound(e)) throw e;
+            // 404 means no response exists yet — proceed to create
+        }
 
-        if (existing?.data) {
-            await this.client.patch(`/customerReviewResponses/${existing.data.id}`, {
+        if (existingResponseId) {
+            await this.client.patch(`/customerReviewResponses/${existingResponseId}`, {
                 data: {
                     type: 'customerReviewResponses',
-                    id: existing.data.id,
+                    id: existingResponseId,
                     attributes: { responseBody },
                 },
             });
@@ -54,11 +65,15 @@ export class ReviewManager {
     }
 
     public async deleteReviewResponse(reviewId: string): Promise<void> {
-        const existing = await this.client.get<any>(
-            `/customerReviews/${reviewId}/response`
-        ).catch(() => null);
-        if (existing?.data) {
-            await this.client.delete(`/customerReviewResponses/${existing.data.id}`);
+        let existingResponseId: string | undefined;
+        try {
+            const existing = await this.client.get<any>(`/customerReviews/${reviewId}/response`);
+            existingResponseId = existing?.data?.id;
+        } catch (e) {
+            if (!isNotFound(e)) throw e;
+        }
+        if (existingResponseId) {
+            await this.client.delete(`/customerReviewResponses/${existingResponseId}`);
         }
     }
 

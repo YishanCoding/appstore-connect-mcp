@@ -24,7 +24,7 @@ export function registerVersionTools(server: McpServer) {
             description: 'List App Store versions for an app (includes state like PREPARE_FOR_SUBMISSION, READY_FOR_SALE, etc.)',
             inputSchema: z.object({
                 appId: z.string(),
-                platform: z.enum(['IOS', 'MAC_OS', 'TV_OS']).optional().default('IOS'),
+                platform: z.enum(['IOS', 'MAC_OS', 'TV_OS', 'VISION_OS']).optional().default('IOS'),
             }),
         },
         async ({ appId, platform }) => {
@@ -64,7 +64,7 @@ export function registerVersionTools(server: McpServer) {
             inputSchema: z.object({
                 appId: z.string(),
                 versionString: z.string().describe('Version number, e.g. "2.1.0"'),
-                platform: z.enum(['IOS', 'MAC_OS', 'TV_OS']).optional().default('IOS'),
+                platform: z.enum(['IOS', 'MAC_OS', 'TV_OS', 'VISION_OS']).optional().default('IOS'),
             }),
         },
         async ({ appId, versionString, platform }) => {

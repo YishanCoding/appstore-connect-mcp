@@ -1,19 +1,36 @@
 import jwt from 'jsonwebtoken';
 import { AuthConfig, JWTPayload } from './types.js';
 
+interface CachedToken {
+    token: string;
+    expiresAt: number; // unix seconds
+}
+
 export class JWTGenerator {
     private static readonly AUDIENCE = 'appstoreconnect-v1';
     private static readonly ALGORITHM = 'ES256' as const;
     private static readonly DEFAULT_EXPIRATION_MINUTES = 20;
+    // Refresh token 60 s before expiry to avoid clock skew issues
+    private static readonly REFRESH_BUFFER_SECONDS = 60;
+
+    private static cache = new Map<string, CachedToken>();
 
     public static generateToken(config: AuthConfig): string {
+        const cacheKey = `${config.keyId}:${config.issuerId}`;
         const now = Math.floor(Date.now() / 1000);
+        const cached = JWTGenerator.cache.get(cacheKey);
+
+        if (cached && cached.expiresAt - JWTGenerator.REFRESH_BUFFER_SECONDS > now) {
+            return cached.token;
+        }
+
         const expirationMinutes = config.expirationMinutes || this.DEFAULT_EXPIRATION_MINUTES;
-        
+        const exp = now + expirationMinutes * 60;
+
         const payload: JWTPayload = {
             iss: config.issuerId,
             iat: now,
-            exp: now + (expirationMinutes * 60),
+            exp,
             aud: this.AUDIENCE,
         };
 
@@ -22,6 +39,7 @@ export class JWTGenerator {
             keyid: config.keyId,
         });
 
+        JWTGenerator.cache.set(cacheKey, { token, expiresAt: exp });
         return token;
     }
 

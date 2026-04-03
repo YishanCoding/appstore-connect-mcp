@@ -3,7 +3,7 @@ import { JWTGenerator } from '../auth/index.js';
 import { ApiClientConfig, ApiError } from './types.js';
 
 export class AppStoreConnectClient {
-    private static readonly BASE_URL = 'https://api.appstoreconnect.apple.com/v1';
+    public static readonly BASE_URL = 'https://api.appstoreconnect.apple.com/v1';
     private client: AxiosInstance;
     private config: ApiClientConfig;
 
@@ -69,5 +69,36 @@ export class AppStoreConnectClient {
 
     public async delete(path: string, data?: any): Promise<void> {
         await this.client.delete(path, { data });
+    }
+
+    /**
+     * Follow pagination links and collect all items from a list endpoint.
+     * Respects the caller-supplied limit; if limit is 0 or unset, fetches all pages.
+     */
+    public async followPages<T extends { data: any[]; links?: { next?: string } }>(
+        path: string,
+        params: Record<string, any> = {},
+        maxItems = 0
+    ): Promise<any[]> {
+        const items: any[] = [];
+        let nextUrl: string | undefined = undefined;
+
+        do {
+            let response: T;
+            if (nextUrl) {
+                // next is a full URL; strip base and use as path
+                const relative = nextUrl.replace(AppStoreConnectClient.BASE_URL, '');
+                response = await this.get<T>(relative);
+            } else {
+                response = await this.get<T>(path, params);
+            }
+
+            items.push(...response.data);
+            nextUrl = response.links?.next;
+
+            if (maxItems > 0 && items.length >= maxItems) break;
+        } while (nextUrl);
+
+        return maxItems > 0 ? items.slice(0, maxItems) : items;
     }
 }
