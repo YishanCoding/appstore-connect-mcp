@@ -15,9 +15,11 @@ export interface AppInfo {
 export interface BuildInfo {
     id: string;
     version: string;
-    buildNumber: string;
     processingState: string;
     uploadedDate: string;
+    expirationDate: string;
+    expired: boolean;
+    minOsVersion: string;
 }
 
 export interface TestFlightInfo {

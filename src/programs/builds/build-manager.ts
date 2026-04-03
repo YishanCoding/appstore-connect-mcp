@@ -32,7 +32,7 @@ export class BuildManager {
             return null;
         }
 
-        return this.mapBuildToInfo(response.data[0]);
+        return this.mapBuildToInfo(response.data[0]!);
     }
 
     public async getBuildsByVersion(appId: string, version: string): Promise<BuildInfo[]> {
@@ -49,9 +49,11 @@ export class BuildManager {
         return {
             id: build.id,
             version: build.attributes.version,
-            buildNumber: build.attributes.version,
             processingState: build.attributes.processingState,
             uploadedDate: build.attributes.uploadedDate,
+            expirationDate: build.attributes.expirationDate,
+            expired: build.attributes.expired,
+            minOsVersion: build.attributes.minOsVersion,
         };
     }
 }

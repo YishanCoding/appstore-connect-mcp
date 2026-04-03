@@ -4,3 +4,6 @@ export * from './apps/index.js';
 export * from './builds/index.js';
 export * from './testflight/index.js';
 export * from './users/index.js';
+export * from './metadata/index.js';
+export * from './versions/index.js';
+export * from './reviews/index.js';

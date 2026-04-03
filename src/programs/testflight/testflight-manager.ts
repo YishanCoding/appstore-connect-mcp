@@ -37,7 +37,7 @@ export class TestFlightManager {
             ],
         };
 
-        await this.client.delete(`/betaGroups/${betaGroupId}/relationships/builds`);
+        await this.client.delete(`/betaGroups/${betaGroupId}/relationships/builds`, data);
     }
 
     public async listBetaTesters(betaGroupId: string): Promise<BetaTester[]> {

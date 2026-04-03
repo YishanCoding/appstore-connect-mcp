@@ -1,5 +1,5 @@
 import { AppStoreConnectClient } from '../api-client/index.js';
-import { User, UsersResponse, UserInvitation } from './types.js';
+import { User, UsersResponse } from './types.js';
 import { UserInfo } from '../../types.js';
 
 export class UserManager {

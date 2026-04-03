@@ -28,9 +28,17 @@ export class JWTGenerator {
     public static validatePrivateKey(privateKey: string): boolean {
         try {
             const lines = privateKey.trim().split('\n');
-            const hasBeginMarker = lines[0].includes('BEGIN PRIVATE KEY');
-            const hasEndMarker = lines[lines.length - 1].includes('END PRIVATE KEY');
-            
+            const firstLine = lines[0] ?? '';
+            const lastLine = lines[lines.length - 1] ?? '';
+            // Apple .p8 keys use either PKCS#8 ("BEGIN PRIVATE KEY") or
+            // SEC1 ("BEGIN EC PRIVATE KEY") format depending on generation time
+            const hasBeginMarker =
+                firstLine.includes('BEGIN PRIVATE KEY') ||
+                firstLine.includes('BEGIN EC PRIVATE KEY');
+            const hasEndMarker =
+                lastLine.includes('END PRIVATE KEY') ||
+                lastLine.includes('END EC PRIVATE KEY');
+
             return hasBeginMarker && hasEndMarker;
         } catch {
             return false;

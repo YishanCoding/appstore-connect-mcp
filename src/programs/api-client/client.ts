@@ -67,7 +67,7 @@ export class AppStoreConnectClient {
         return response.data;
     }
 
-    public async delete(path: string): Promise<void> {
-        await this.client.delete(path);
+    public async delete(path: string, data?: any): Promise<void> {
+        await this.client.delete(path, { data });
     }
 }

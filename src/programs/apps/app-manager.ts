@@ -27,7 +27,7 @@ export class AppManager {
             return null;
         }
 
-        return this.mapAppToInfo(response.data[0]);
+        return this.mapAppToInfo(response.data[0]!);
     }
 
     private mapAppToInfo(app: App): AppInfo {
