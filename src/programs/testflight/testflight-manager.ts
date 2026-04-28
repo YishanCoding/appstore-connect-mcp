@@ -76,7 +76,8 @@ export class TestFlightManager {
             id: group.id,
             name: group.attributes.name,
             isInternalGroup: group.attributes.isInternalGroup,
-            isActive: group.attributes.publicLinkEnabled || false,
+            publicLinkEnabled: group.attributes.publicLinkEnabled ?? false,
+            publicLink: group.attributes.publicLink ?? null,
         };
     }
 }

@@ -26,7 +26,8 @@ export interface TestFlightInfo {
     id: string;
     name: string;
     isInternalGroup: boolean;
-    isActive: boolean;
+    publicLinkEnabled: boolean;
+    publicLink: string | null;
 }
 
 export interface UserInfo {

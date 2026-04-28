@@ -18,7 +18,8 @@ export class UserManager {
         firstName: string,
         lastName: string,
         roles: string[],
-        allAppsVisible: boolean = false
+        allAppsVisible: boolean = false,
+        provisioningAllowed: boolean = false
     ): Promise<void> {
         const data = {
             data: {
@@ -29,7 +30,7 @@ export class UserManager {
                     lastName,
                     roles,
                     allAppsVisible,
-                    provisioningAllowed: false,
+                    provisioningAllowed,
                 },
             },
         };

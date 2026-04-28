@@ -21,6 +21,7 @@ const inputSchema = z.object({
         'CREATE_APPS',
     ])).describe('Roles to assign to the user'),
     allAppsVisible: z.boolean().optional().default(false).describe('Whether the user can see all apps'),
+    provisioningAllowed: z.boolean().optional().default(false).describe('Whether the user can manage certificates, identifiers and devices'),
 });
 
 export function registerInviteUser(server: McpServer) {
@@ -30,7 +31,7 @@ export function registerInviteUser(server: McpServer) {
             description: 'Invite a new user to the App Store Connect team',
             inputSchema,
         },
-        async ({ email, firstName, lastName, roles, allAppsVisible }) => {
+        async ({ email, firstName, lastName, roles, allAppsVisible, provisioningAllowed }) => {
             try {
                 const credentials = getStoredCredentials();
                 if (!credentials) {
@@ -54,7 +55,7 @@ export function registerInviteUser(server: McpServer) {
                 });
 
                 const userManager = new UserManager(client);
-                await userManager.inviteUser(email, firstName, lastName, roles, allAppsVisible);
+                await userManager.inviteUser(email, firstName, lastName, roles, allAppsVisible, provisioningAllowed);
 
                 return {
                     content: [
