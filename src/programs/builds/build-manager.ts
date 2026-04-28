@@ -35,11 +35,12 @@ export class BuildManager {
         return this.mapBuildToInfo(response.data[0]!);
     }
 
-    public async getBuildsByVersion(appId: string, version: string): Promise<BuildInfo[]> {
+    public async getBuildsByVersion(appId: string, version: string, limit: number = 50): Promise<BuildInfo[]> {
         const response = await this.client.get<BuildsResponse>('/builds', {
             'filter[app]': appId,
             'filter[version]': version,
             sort: '-uploadedDate',
+            limit,
         });
 
         return response.data.map((build) => this.mapBuildToInfo(build));

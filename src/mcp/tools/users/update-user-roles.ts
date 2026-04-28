@@ -17,6 +17,10 @@ const inputSchema = z.object({
         'CUSTOMER_SUPPORT',
         'ACCESS_TO_REPORTS',
         'CREATE_APPS',
+        'DEVELOPER',
+        'CLOUD_MANAGED_DEVELOPER_ID',
+        'CLOUD_MANAGED_APP_DISTRIBUTION',
+        'GENERATE_INDIVIDUAL_KEYS',
     ])).describe('New roles to assign to the user (replaces existing roles)'),
 });
 

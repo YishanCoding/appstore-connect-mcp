@@ -37,3 +37,12 @@ export interface UserInfo {
     lastName: string;
     roles: string[];
 }
+
+export interface BetaTesterInfo {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    inviteType: string;
+    state: string;
+}

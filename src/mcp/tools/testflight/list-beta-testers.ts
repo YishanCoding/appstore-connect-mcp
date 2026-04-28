@@ -5,6 +5,7 @@ import { getStoredCredentials } from '../auth/store-credentials.js';
 
 const inputSchema = z.object({
     betaGroupId: z.string().describe('Beta group ID to list testers for'),
+    limit: z.number().optional().default(200).describe('Maximum number of testers to return'),
 });
 
 export function registerListBetaTesters(server: McpServer) {
@@ -14,7 +15,7 @@ export function registerListBetaTesters(server: McpServer) {
             description: 'List all beta testers in a TestFlight beta group',
             inputSchema,
         },
-        async ({ betaGroupId }) => {
+        async ({ betaGroupId, limit }) => {
             try {
                 const credentials = getStoredCredentials();
                 if (!credentials) {
@@ -30,7 +31,7 @@ export function registerListBetaTesters(server: McpServer) {
                     privateKey: credentials.privateKey,
                 });
 
-                const testers = await new TestFlightManager(client).listBetaTesters(betaGroupId);
+                const testers = await new TestFlightManager(client).listBetaTesters(betaGroupId, limit);
 
                 return {
                     content: [{ type: 'text' as const, text: JSON.stringify({ testers, count: testers.length }, null, 2) }],

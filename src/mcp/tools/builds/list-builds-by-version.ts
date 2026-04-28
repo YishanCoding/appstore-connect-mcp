@@ -6,6 +6,7 @@ import { getStoredCredentials } from '../auth/store-credentials.js';
 const inputSchema = z.object({
     appId: z.string().describe('App ID to filter builds for'),
     version: z.string().describe('Version string (build number) to filter by, e.g. "169"'),
+    limit: z.number().optional().default(50).describe('Maximum number of builds to return'),
 });
 
 export function registerListBuildsByVersion(server: McpServer) {
@@ -15,7 +16,7 @@ export function registerListBuildsByVersion(server: McpServer) {
             description: 'List builds for a specific app filtered by version/build number',
             inputSchema,
         },
-        async ({ appId, version }) => {
+        async ({ appId, version, limit }) => {
             try {
                 const credentials = getStoredCredentials();
                 if (!credentials) {
@@ -31,7 +32,7 @@ export function registerListBuildsByVersion(server: McpServer) {
                     privateKey: credentials.privateKey,
                 });
 
-                const builds = await new BuildManager(client).getBuildsByVersion(appId, version);
+                const builds = await new BuildManager(client).getBuildsByVersion(appId, version, limit);
 
                 return {
                     content: [{ type: 'text' as const, text: JSON.stringify({ builds, count: builds.length }, null, 2) }],

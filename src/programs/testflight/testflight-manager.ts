@@ -1,6 +1,6 @@
 import { AppStoreConnectClient } from '../api-client/index.js';
 import { BetaGroup, BetaGroupsResponse, BetaTester, BetaTestersResponse } from './types.js';
-import { TestFlightInfo } from '../../types.js';
+import { TestFlightInfo, BetaTesterInfo } from '../../types.js';
 
 export class TestFlightManager {
     constructor(private client: AppStoreConnectClient) {}
@@ -40,12 +40,12 @@ export class TestFlightManager {
         await this.client.delete(`/betaGroups/${betaGroupId}/relationships/builds`, data);
     }
 
-    public async listBetaTesters(betaGroupId: string): Promise<BetaTester[]> {
+    public async listBetaTesters(betaGroupId: string, limit: number = 200): Promise<BetaTesterInfo[]> {
         const response = await this.client.get<BetaTestersResponse>(`/betaGroups/${betaGroupId}/betaTesters`, {
-            limit: 200,
+            limit,
         });
 
-        return response.data;
+        return response.data.map((t) => this.mapBetaTesterToInfo(t));
     }
 
     public async addBetaTester(email: string, firstName: string, lastName: string, betaGroupIds: string[]) {
@@ -69,6 +69,17 @@ export class TestFlightManager {
         };
 
         await this.client.post('/betaTesters', data);
+    }
+
+    private mapBetaTesterToInfo(tester: BetaTester): BetaTesterInfo {
+        return {
+            id: tester.id,
+            email: tester.attributes.email,
+            firstName: tester.attributes.firstName ?? null,
+            lastName: tester.attributes.lastName ?? null,
+            inviteType: tester.attributes.inviteType,
+            state: tester.attributes.state,
+        };
     }
 
     private mapBetaGroupToInfo(group: BetaGroup): TestFlightInfo {
