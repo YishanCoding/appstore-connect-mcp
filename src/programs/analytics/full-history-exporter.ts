@@ -22,6 +22,12 @@ const ASC_BASE = 'https://appstoreconnect.apple.com';
 const TIMESERIES_API = `${ASC_BASE}/analytics/api/v1/data/timeseries`;
 const SETTINGS_API = `${ASC_BASE}/analytics/api/v1/settings/all`;
 
+/**
+ * Metrics that only support MONTH frequency (DAY/WEEK return 400/500).
+ * Discovery 2026-05-18: revenue-recurring has unavailableFrequencies: ["DAY","WEEK"]
+ */
+const MONTH_ONLY_METRICS = new Set(['revenue-recurring']);
+
 /** Metrics visible in the ASC Analytics Metrics tab */
 export const KEY_METRICS = [
     // Acquisition / App Store
@@ -110,13 +116,17 @@ function openAscTab(session: string, adamId: string): void {
     execSync('sleep 4'); // let the SPA bootstrap
 }
 
-/** Load metric→supported-dimension-keys map from ASC settings/all */
+/** Load metric→supported-dimension-keys map from ASC settings/all.
+ *  Only includes dimensions where groupBy=true (filter-only dims like appPurchaseDay are excluded). */
 function loadSettingsFromBrowser(session: string): Map<string, Set<string>> {
     const js = `(async function() {
   var resp = await fetch("${SETTINGS_API}");
   var data = await resp.json();
+  // Only keep dimensions that can be used as group-by (groupBy !== false)
   var dimMap = {};
-  (data.dimensions || []).forEach(function(d) { dimMap[d.id] = d.key; });
+  (data.dimensions || []).forEach(function(d) {
+    if (d.groupBy !== false) dimMap[d.id] = d.key;
+  });
   var result = {};
   (data.measures || []).forEach(function(m) {
     result[m.key] = (m.dimensions || []).map(function(id) { return dimMap[id]; }).filter(Boolean);
@@ -145,12 +155,13 @@ function fetchGroupedToLocalStorage(
     metric: string,
     dimKey: string,
     startTime: string,
-    endTime: string
+    endTime: string,
+    frequency: 'DAY' | 'MONTH' = 'DAY'
 ): string {
     const payload = {
         adamId: [adamId],
         measures: [metric],
-        frequency: 'DAY',
+        frequency,
         startTime,
         endTime,
         dimensionFilters: [],
@@ -208,10 +219,12 @@ function writeCsv(
     outputDir: string,
     metric: string,
     dimLabel: string,
-    data: { rows: (string | number | null)[][] }
+    data: { rows: (string | number | null)[][] },
+    frequency: 'DAY' | 'MONTH' = 'DAY'
 ): { file: string; rows: number } {
     const safeMetric = metric.replace(/\//g, '-').replace(/\s/g, '_');
-    const filename = `Tripo_${safeMetric}_${dimLabel}_日分.csv`;
+    const suffix = frequency === 'MONTH' ? '月分' : '日分';
+    const filename = `Tripo_${safeMetric}_${dimLabel}_${suffix}.csv`;
     const filepath = path.join(outputDir, filename);
 
     // BOM for Excel compatibility
@@ -254,6 +267,11 @@ export class FullHistoryExporter {
 
         for (const metric of metrics) {
             const supported = metricDimMap.get(metric) ?? new Set();
+            // revenue-recurring only supports MONTH frequency
+            const frequency: 'DAY' | 'MONTH' = MONTH_ONLY_METRICS.has(metric) ? 'MONTH' : 'DAY';
+            const suffix = frequency === 'MONTH' ? '月分' : '日分';
+            // For MONTH metrics use 2025-01-01 as the earliest meaningful start
+            const effectiveStartTime = frequency === 'MONTH' ? '2025-01-01T00:00:00Z' : startTime;
 
             for (const dimKey of dimensions) {
                 const dimLabel = dimLookup.get(dimKey) ?? dimKey;
@@ -266,7 +284,7 @@ export class FullHistoryExporter {
 
                 // Skip if file already exists
                 const safeMetric = metric.replace(/\//g, '-').replace(/\s/g, '_');
-                const filepath = path.join(outputDir, `Tripo_${safeMetric}_${dimLabel}_日分.csv`);
+                const filepath = path.join(outputDir, `Tripo_${safeMetric}_${dimLabel}_${suffix}.csv`);
                 if (fs.existsSync(filepath)) {
                     result.skipped.push({ metric, dimension: dimKey, reason: 'exists' });
                     continue;
@@ -275,7 +293,7 @@ export class FullHistoryExporter {
                 // Fetch
                 let fetchResult: string;
                 try {
-                    fetchResult = fetchGroupedToLocalStorage(sessionName, adamId, metric, dimKey, startTime, endTime);
+                    fetchResult = fetchGroupedToLocalStorage(sessionName, adamId, metric, dimKey, effectiveStartTime, endTime, frequency);
                 } catch (e: any) {
                     result.failed.push({ metric, dimension: dimKey, error: e.message });
                     continue;
@@ -298,7 +316,7 @@ export class FullHistoryExporter {
                     continue;
                 }
 
-                const { file, rows } = writeCsv(outputDir, metric, dimLabel, data);
+                const { file, rows } = writeCsv(outputDir, metric, dimLabel, data, frequency);
                 result.saved.push({ metric, dimension: dimKey, file, rows });
             }
         }
