@@ -13,6 +13,9 @@ import {
 const ASC_BASE = 'https://appstoreconnect.apple.com';
 const ANALYTICS_API = `${ASC_BASE}/analytics/api/v1/data/timeseries`;
 
+// opencli ≥v1.7 requires a session name as the first argument after "browser"
+const BROWSER_SESSION = process.env.OPENCLI_BROWSER_SESSION ?? 'asc';
+
 function spawnOpencli(args: string[]): string {
     const result = spawnSync('opencli', args, { encoding: 'utf8', timeout: 30000 });
     if (result.error) throw new Error(`opencli spawn error: ${result.error.message}`);
@@ -22,8 +25,8 @@ function spawnOpencli(args: string[]): string {
 
 function openAscTab(adamId: string): string {
     const url = `${ASC_BASE}/apps/${adamId}/analytics/acquisition/sources`;
-    const raw = spawnOpencli(['browser', 'open', url]);
-    // strip trailing update notice lines
+    const raw = spawnOpencli(['browser', BROWSER_SESSION, 'open', url]);
+    // strip warning/node lines; find the JSON line with page id
     const jsonLine = raw.split('\n').find((l) => l.trim().startsWith('{'));
     if (!jsonLine) throw new Error(`Unexpected opencli browser open output: ${raw}`);
     return (JSON.parse(jsonLine) as { page: string }).page;
@@ -49,7 +52,7 @@ function fetchTimeseriesForSource(
     // spawnSync passes the JS as a single arg — no shell quoting needed
     const js = `(async()=>{const r=await fetch(${JSON.stringify(ANALYTICS_API)},{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-Requested-By':'appstoreconnect.apple.com'},body:JSON.stringify(${JSON.stringify(payload)})});return JSON.stringify(await r.json())})()`;
 
-    const raw = spawnOpencli(['browser', 'eval', '--tab', tabId, js]);
+    const raw = spawnOpencli(['browser', BROWSER_SESSION, 'eval', '--tab', tabId, js]);
     // opencli eval returns JSON-encoded result; unwrap one level if needed
     let parsed: string;
     try {
