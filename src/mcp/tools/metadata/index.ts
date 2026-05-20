@@ -76,7 +76,7 @@ export function registerMetadataTools(server: McpServer) {
             description: 'Create a new version locale entry (description, keywords, whatsNew). For name/subtitle, use appstore_update_app_info_localization.',
             inputSchema: z.object({
                 appStoreVersionId: z.string(),
-                locale: z.string().describe('Locale code, e.g. zh-Hans, en-US, ja'),
+                locale: z.string().describe('Locale code. Standard: zh-Hans, zh-Hant, en-US, en-GB, en-CA, en-AU, ja, ko, ru, vi, ar-SA, es-MX, es-ES, pt-BR, pt-PT, fr-FR, fr-CA, de-DE, it, nl-NL, sv, da, no, fi, pl, ro, cs, hu, el, hr, sk, tr, id, th, uk, ms, he, hi, ca. New in 2026/03 (require country suffix): bn-BD, gu-IN, kn-IN, ml-IN, mr-IN, or-IN, pa-IN, sl-SI, ta-IN, te-IN, ur-PK. Note: zh-HK is NOT a separate locale — Hong Kong/Macau/Taiwan all use zh-Hant.'),
                 description: z.string().optional(),
                 keywords: z.string().optional(),
                 promotionalText: z.string().optional(),
