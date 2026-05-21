@@ -141,4 +141,81 @@ export function registerMetadataTools(server: McpServer) {
             }
         }
     );
+
+    server.registerTool(
+        'appstore_batch_update_app_info_localizations',
+        {
+            description: 'Batch update name/subtitle for multiple locales in one call. More efficient than calling appstore_update_app_info_localization repeatedly.',
+            inputSchema: z.object({
+                updates: z.array(z.object({
+                    appInfoLocalizationId: z.string().describe('ID from appstore_list_app_info_localizations'),
+                    name: z.string().optional().describe('App name (max 30 chars)'),
+                    subtitle: z.string().optional().describe('Subtitle (max 30 chars)'),
+                    privacyChoicesUrl: z.string().optional(),
+                    privacyPolicyText: z.string().optional(),
+                    privacyPolicyUrl: z.string().optional(),
+                })).describe('Array of locale updates to apply'),
+            }),
+        },
+        async ({ updates }) => {
+            const client = makeClient();
+            if (!client) return noCredentials();
+            const manager = new MetadataManager(client);
+            const results: Array<{ success: boolean; locale?: string; id: string; error?: string }> = [];
+            for (const { appInfoLocalizationId, ...fields } of updates) {
+                try {
+                    const updated = await manager.updateAppInfoLocalization(appInfoLocalizationId, fields);
+                    results.push({ success: true, locale: updated.locale, id: appInfoLocalizationId });
+                } catch (e: any) {
+                    results.push({ success: false, id: appInfoLocalizationId, error: e.message });
+                }
+            }
+            const succeeded = results.filter(r => r.success).length;
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: JSON.stringify({ total: updates.length, succeeded, failed: updates.length - succeeded, results }, null, 2),
+                }],
+            };
+        }
+    );
+
+    server.registerTool(
+        'appstore_batch_update_version_localizations',
+        {
+            description: 'Batch update version-scoped metadata (description, keywords, whatsNew, etc.) for multiple locales in one call.',
+            inputSchema: z.object({
+                updates: z.array(z.object({
+                    localizationId: z.string().describe('ID from appstore_list_version_localizations'),
+                    description: z.string().optional(),
+                    keywords: z.string().optional(),
+                    promotionalText: z.string().optional(),
+                    whatsNew: z.string().optional(),
+                    marketingUrl: z.string().optional(),
+                    supportUrl: z.string().optional(),
+                })).describe('Array of locale updates to apply'),
+            }),
+        },
+        async ({ updates }) => {
+            const client = makeClient();
+            if (!client) return noCredentials();
+            const manager = new MetadataManager(client);
+            const results: Array<{ success: boolean; locale?: string; id: string; error?: string }> = [];
+            for (const { localizationId, ...fields } of updates) {
+                try {
+                    const updated = await manager.updateVersionLocalization(localizationId, fields);
+                    results.push({ success: true, locale: updated.locale, id: localizationId });
+                } catch (e: any) {
+                    results.push({ success: false, id: localizationId, error: e.message });
+                }
+            }
+            const succeeded = results.filter(r => r.success).length;
+            return {
+                content: [{
+                    type: 'text' as const,
+                    text: JSON.stringify({ total: updates.length, succeeded, failed: updates.length - succeeded, results }, null, 2),
+                }],
+            };
+        }
+    );
 }

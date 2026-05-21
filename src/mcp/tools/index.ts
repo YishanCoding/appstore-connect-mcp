@@ -8,6 +8,7 @@ import { registerMetadataTools } from './metadata/index.js';
 import { registerVersionTools } from './versions/index.js';
 import { registerReviewTools } from './reviews/index.js';
 import { registerAnalyticsTools } from './analytics/index.js';
+import { registerCppTools } from './cpp/index.js';
 
 export function registerAllTools(server: McpServer) {
     registerAuthTools(server);
@@ -19,4 +20,5 @@ export function registerAllTools(server: McpServer) {
     registerVersionTools(server);
     registerReviewTools(server);
     registerAnalyticsTools(server);
+    registerCppTools(server);
 }

@@ -1,6 +1,13 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { JWTGenerator } from '../auth/index.js';
 import { ApiClientConfig, ApiError } from './types.js';
+
+function getProxyAgent() {
+    const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+    if (!proxyUrl) return undefined;
+    return new HttpsProxyAgent(proxyUrl);
+}
 
 export class AppStoreConnectClient {
     public static readonly BASE_URL = 'https://api.appstoreconnect.apple.com/v1';
@@ -9,11 +16,13 @@ export class AppStoreConnectClient {
 
     constructor(config: ApiClientConfig) {
         this.config = config;
+        const agent = getProxyAgent();
         this.client = axios.create({
             baseURL: config.baseURL || AppStoreConnectClient.BASE_URL,
             headers: {
                 'Content-Type': 'application/json',
             },
+            ...(agent ? { httpsAgent: agent, proxy: false } : {}),
         });
 
         this.setupInterceptors();

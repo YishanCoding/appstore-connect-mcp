@@ -87,13 +87,22 @@ export class MetadataManager {
     // ── AppInfoLocalizations (name, subtitle) ─────────────────────────────
 
     public async listAppInfoLocalizations(appId: string): Promise<AppInfoLocalizationInfo[]> {
-        // appInfos is the parent resource; we need the default appInfo first
+        // Each app has multiple appInfos — typically one EDITABLE (for the next
+        // unsubmitted version) and one tied to the live READY_FOR_SALE version.
+        // Live appInfo's name/subtitle is locked; only the EDITABLE one can be
+        // modified. Prefer states in this order: PREPARE_FOR_SUBMISSION (editable
+        // for next version) → REPLACED_WITH_NEW_INFO (older editable) → fallback
+        // to first available.
         const appInfosResponse = await this.client.get<any>(`/apps/${appId}/appInfos`);
-        const appInfoId = appInfosResponse.data?.[0]?.id;
-        if (!appInfoId) throw new Error('No appInfo found for this app');
+        const infos = appInfosResponse.data || [];
+        if (infos.length === 0) throw new Error('No appInfo found for this app');
+
+        const editableStates = ['PREPARE_FOR_SUBMISSION', 'WAITING_FOR_REVIEW', 'IN_REVIEW', 'REPLACED_WITH_NEW_INFO'];
+        let chosen = infos.find((i: any) => editableStates.includes(i.attributes?.appStoreState));
+        if (!chosen) chosen = infos[0];
 
         const response = await this.client.get<AppInfoLocalizationsResponse>(
-            `/appInfos/${appInfoId}/appInfoLocalizations`
+            `/appInfos/${chosen.id}/appInfoLocalizations`
         );
         return response.data.map((loc) => this.mapAppInfoLocToInfo(loc));
     }
