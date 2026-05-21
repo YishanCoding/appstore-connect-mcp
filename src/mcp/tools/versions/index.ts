@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppStoreConnectClient } from '../../../programs/api-client/index.js';
 import { VersionManager } from '../../../programs/versions/index.js';
 import { getStoredCredentials } from '../auth/store-credentials.js';
+import { registerScreenshotTools } from './screenshots.js';
 
 function makeClient() {
     const creds = getStoredCredentials();
@@ -18,6 +19,7 @@ function noCredentials() {
 }
 
 export function registerVersionTools(server: McpServer) {
+    registerScreenshotTools(server);
     server.registerTool(
         'appstore_list_versions',
         {
