@@ -1,5 +1,5 @@
 import { AppStoreConnectClient } from '../api-client/index.js';
-import { Build, BuildsResponse, BuildResponse } from './types.js';
+import { Build, BuildsResponse, BuildResponse, BuildBetaDetailAttributes, BuildBetaDetailResponse } from './types.js';
 import { BuildInfo } from '../../types.js';
 
 export class BuildManager {
@@ -44,6 +44,25 @@ export class BuildManager {
         });
 
         return response.data.map((build) => this.mapBuildToInfo(build));
+    }
+
+    public async getBuildBetaDetail(buildId: string) {
+        const response = await this.client.get<BuildBetaDetailResponse>(`/builds/${buildId}/buildBetaDetail`);
+        return response.data;
+    }
+
+    public async updateBuildBetaDetail(buildBetaDetailId: string, attributes: BuildBetaDetailAttributes) {
+        const response = await this.client.patch<BuildBetaDetailResponse>(
+            `/buildBetaDetails/${buildBetaDetailId}`,
+            {
+                data: {
+                    type: 'buildBetaDetails',
+                    id: buildBetaDetailId,
+                    attributes,
+                },
+            }
+        );
+        return response.data;
     }
 
     private mapBuildToInfo(build: Build): BuildInfo {

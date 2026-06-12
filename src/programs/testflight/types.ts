@@ -73,3 +73,35 @@ export interface BetaTestersResponse {
         };
     };
 }
+
+export interface BetaAppLocalization {
+    type: string;
+    id: string;
+    attributes: {
+        locale: string;
+        description?: string;
+        feedbackEmail?: string;
+        marketingUrl?: string;
+        privacyPolicyUrl?: string;
+    };
+}
+
+export interface BetaAppLocalizationsResponse {
+    data: BetaAppLocalization[];
+    links?: {
+        self?: string;
+        next?: string;
+    };
+}
+
+export interface BetaAppLocalizationResponse {
+    data: BetaAppLocalization;
+}
+
+export interface BetaAppLocalizationAttributes {
+    locale?: string;
+    description?: string;
+    feedbackEmail?: string;
+    marketingUrl?: string;
+    privacyPolicyUrl?: string;
+}

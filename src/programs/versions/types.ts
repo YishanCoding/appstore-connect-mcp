@@ -28,3 +28,30 @@ export interface VersionInfo {
     releaseType?: string;
     createdDate: string;
 }
+
+export interface AppStoreReviewRequestResponse {
+    data: any;
+}
+
+export interface AppStoreVersionPhasedReleaseResponse {
+    data: any;
+}
+
+export interface AppStoreVersionReleaseRequestResponse {
+    data: any;
+}
+
+export interface AppStoreReviewDetailResponse {
+    data: any;
+}
+
+export interface ReviewDetailAttributes {
+    contactFirstName?: string;
+    contactLastName?: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    demoAccountName?: string;
+    demoAccountPassword?: string;
+    demoAccountRequired?: boolean;
+    notes?: string;
+}

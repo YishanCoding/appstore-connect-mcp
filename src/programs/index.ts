@@ -8,3 +8,4 @@ export * from './metadata/index.js';
 export * from './versions/index.js';
 export * from './reviews/index.js';
 export * from './analytics/index.js';
+export * from './events/index.js';

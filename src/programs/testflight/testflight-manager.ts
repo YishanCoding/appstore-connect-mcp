@@ -1,5 +1,14 @@
 import { AppStoreConnectClient } from '../api-client/index.js';
-import { BetaGroup, BetaGroupsResponse, BetaTester, BetaTestersResponse } from './types.js';
+import {
+    BetaAppLocalization,
+    BetaAppLocalizationAttributes,
+    BetaAppLocalizationResponse,
+    BetaAppLocalizationsResponse,
+    BetaGroup,
+    BetaGroupsResponse,
+    BetaTester,
+    BetaTestersResponse,
+} from './types.js';
 import { TestFlightInfo, BetaTesterInfo } from '../../types.js';
 
 export class TestFlightManager {
@@ -69,6 +78,46 @@ export class TestFlightManager {
         };
 
         await this.client.post('/betaTesters', data);
+    }
+
+    public async listBetaLocalizations(appId: string): Promise<BetaAppLocalization[]> {
+        const response = await this.client.get<BetaAppLocalizationsResponse>(
+            `/apps/${appId}/betaAppLocalizations`
+        );
+        return response.data;
+    }
+
+    public async upsertBetaLocalization(appId: string, attributes: BetaAppLocalizationAttributes & { locale: string }) {
+        const localizations = await this.listBetaLocalizations(appId);
+        const existing = localizations.find((localization) => localization.attributes.locale === attributes.locale);
+
+        if (existing) {
+            const response = await this.client.patch<BetaAppLocalizationResponse>(
+                `/betaAppLocalizations/${existing.id}`,
+                {
+                    data: {
+                        type: 'betaAppLocalizations',
+                        id: existing.id,
+                        attributes,
+                    },
+                }
+            );
+            return response.data;
+        }
+
+        const response = await this.client.post<BetaAppLocalizationResponse>(
+            '/betaAppLocalizations',
+            {
+                data: {
+                    type: 'betaAppLocalizations',
+                    attributes,
+                    relationships: {
+                        app: { data: { type: 'apps', id: appId } },
+                    },
+                },
+            }
+        );
+        return response.data;
     }
 
     private mapBetaTesterToInfo(tester: BetaTester): BetaTesterInfo {

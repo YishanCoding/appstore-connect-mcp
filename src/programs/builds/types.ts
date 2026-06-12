@@ -63,3 +63,13 @@ export interface BuildBetaDetail {
         externalBuildState: string;
     };
 }
+
+export interface BuildBetaDetailResponse {
+    data: BuildBetaDetail;
+}
+
+export interface BuildBetaDetailAttributes {
+    autoNotifyEnabled?: boolean;
+    internalBuildState?: string;
+    externalBuildState?: string;
+}

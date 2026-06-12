@@ -9,6 +9,7 @@ import { registerVersionTools } from './versions/index.js';
 import { registerReviewTools } from './reviews/index.js';
 import { registerAnalyticsTools } from './analytics/index.js';
 import { registerCppTools } from './cpp/index.js';
+import { registerEventsTools } from './events/index.js';
 
 export function registerAllTools(server: McpServer) {
     registerAuthTools(server);
@@ -21,4 +22,5 @@ export function registerAllTools(server: McpServer) {
     registerReviewTools(server);
     registerAnalyticsTools(server);
     registerCppTools(server);
+    registerEventsTools(server);
 }
