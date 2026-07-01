@@ -10,6 +10,7 @@ import { registerReviewTools } from './reviews/index.js';
 import { registerAnalyticsTools } from './analytics/index.js';
 import { registerCppTools } from './cpp/index.js';
 import { registerEventsTools } from './events/index.js';
+import { registerIapTools } from './iap/index.js';
 
 export function registerAllTools(server: McpServer) {
     registerAuthTools(server);
@@ -23,4 +24,5 @@ export function registerAllTools(server: McpServer) {
     registerAnalyticsTools(server);
     registerCppTools(server);
     registerEventsTools(server);
+    registerIapTools(server);
 }

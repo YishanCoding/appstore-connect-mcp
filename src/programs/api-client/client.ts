@@ -61,6 +61,10 @@ export class AppStoreConnectClient {
         return this.client;
     }
 
+    public getBaseURL(): string {
+        return this.config.baseURL || AppStoreConnectClient.BASE_URL;
+    }
+
     public async get<T>(path: string, params?: Record<string, any>): Promise<T> {
         const response = await this.client.get<T>(path, { params });
         return response.data;
