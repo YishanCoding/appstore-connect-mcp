@@ -174,12 +174,10 @@ export function registerScreenshotTools(server: McpServer) {
 
                 // Step 3: Upload each image in order with 400ms delay between uploads
                 const screenshotIds: string[] = [];
-                for (let i = 0; i < imagePaths.length; i++) {
+                for (const [i, imagePath] of imagePaths.entries()) {
                     if (i > 0) {
                         await new Promise((r) => setTimeout(r, 400));
                     }
-                    const imagePath = imagePaths[i];
-                    if (!imagePath) continue;
                     const shotId = await uploadScreenshot(client, newSetId, imagePath);
                     screenshotIds.push(shotId);
                 }

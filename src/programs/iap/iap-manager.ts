@@ -23,8 +23,9 @@ export class IapManager {
     }
 
     public async getInAppPurchase(inAppPurchaseId: string): Promise<InAppPurchaseInfo> {
+        const v2BaseUrl = this.client.getBaseURL().replace(/\/v1$/, '/v2');
         const response = await this.client.get<InAppPurchaseV2Response>(
-            `https://api.appstoreconnect.apple.com/v2/inAppPurchases/${inAppPurchaseId}`
+            `${v2BaseUrl}/inAppPurchases/${inAppPurchaseId}`
         );
         return this.mapInAppPurchase(response.data);
     }
