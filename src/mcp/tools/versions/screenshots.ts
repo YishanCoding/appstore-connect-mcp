@@ -178,7 +178,9 @@ export function registerScreenshotTools(server: McpServer) {
                     if (i > 0) {
                         await new Promise((r) => setTimeout(r, 400));
                     }
-                    const shotId = await uploadScreenshot(client, newSetId, imagePaths[i]);
+                    const imagePath = imagePaths[i];
+                    if (!imagePath) continue;
+                    const shotId = await uploadScreenshot(client, newSetId, imagePath);
                     screenshotIds.push(shotId);
                 }
 

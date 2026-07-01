@@ -30,6 +30,11 @@ A Model Context Protocol (MCP) server for interacting with Apple's App Store Con
 - Invite new users to the team
 - Manage user permissions and access
 
+### In-App Purchases
+- List In-App Purchases for an app
+- Get In-App Purchase details
+- List subscription groups for an app
+
 ## Prerequisites
 
 - Node.js 18.0.0 or higher
@@ -112,6 +117,11 @@ appstore_validate_credentials
 #### Users
 - `appstore_list_users` - List team members
 - `appstore_invite_user` - Invite new team member
+
+#### In-App Purchases
+- `appstore_list_in_app_purchases` - List In-App Purchases for an app
+- `appstore_get_in_app_purchase` - Get a specific In-App Purchase
+- `appstore_list_subscription_groups` - List subscription groups for an app
 
 ## API Client Generation
 

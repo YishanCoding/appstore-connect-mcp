@@ -3,7 +3,6 @@ import {
     AppEventInfo,
     AppEventLocalizationInfo,
     AppEventSubmissionInfo,
-    AppEventsResponse,
     AppEventResponse,
     AppEventLocalizationsResponse,
     AppEventLocalizationResponse,

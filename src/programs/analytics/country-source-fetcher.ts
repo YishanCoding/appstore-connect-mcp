@@ -243,8 +243,8 @@ export async function fetchCountrySourceData(
     const summary: CountrySummary[] = Array.from(summaryMap.entries()).map(([key, b]) => {
         const [country, sourceKey] = key.split('||');
         return {
-            country,
-            source:            SOURCE_LABELS[sourceKey as SourceKey] ?? sourceKey,
+            country:           country ?? '',
+            source:            sourceKey ? SOURCE_LABELS[sourceKey as SourceKey] ?? sourceKey : '',
             avgDailyDownloads: avg(b.downloads),
             avgDailyImpr:      avg(b.impr),
             avgCR:             avg(b.cr),
