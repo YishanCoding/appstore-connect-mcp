@@ -16,20 +16,28 @@ export class ReviewManager {
             sort?: string;
             filterRating?: number;
             filterTerritory?: string;
+            /** false = a single page. true = follow links.next up to limit. omitted = follow, capped by limit (MCP). */
+            all?: boolean;
         } = {}
     ): Promise<ReviewInfo[]> {
+        const cap = options.all && options.limit == null ? undefined : (options.limit ?? 100);
+        const pageSize = Math.min(options.limit ?? 200, 200);
         const params: Record<string, any> = {
-            limit: options.limit ?? 100,
             sort: options.sort ?? '-createdDate',
+            limit: pageSize,
         };
         if (options.filterRating) params['filter[rating]'] = options.filterRating;
         if (options.filterTerritory) params['filter[territory]'] = options.filterTerritory;
 
-        const items = await this.client.followPages<CustomerReviewsResponse>(
-            `/apps/${appId}/customerReviews`,
-            params,
-            options.limit ?? 100
-        );
+        const path = `/apps/${appId}/customerReviews`;
+        if (options.all === false) {
+            const response = await this.client.get<CustomerReviewsResponse>(path, params);
+            return (response.data ?? []).slice(0, cap ?? pageSize).map((r) => this.mapToInfo(r));
+        }
+
+        const items = await this.client.getAllPages<CustomerReviewsResponse['data'][number]>(path, params, {
+            limit: cap,
+        });
         return items.map((r) => this.mapToInfo(r));
     }
 

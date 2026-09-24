@@ -37,8 +37,15 @@ export class EventManager {
         };
     }
 
-    public async listEvents(appId: string): Promise<AppEventInfo[]> {
-        const items = await this.client.followPages<any>(`/apps/${appId}/appEvents`);
+    public async listEvents(appId: string, options?: { all?: boolean; limit?: number }): Promise<AppEventInfo[]> {
+        if (options?.all === false) {
+            const response = await this.client.get<{ data: any[] }>(`/apps/${appId}/appEvents`, {
+                limit: Math.min(options.limit ?? 200, 200),
+            });
+            const data = options.limit ? (response.data ?? []).slice(0, options.limit) : (response.data ?? []);
+            return data.map((v) => this.mapEvent(v));
+        }
+        const items = await this.client.getAllPages(`/apps/${appId}/appEvents`, {}, { limit: options?.limit });
         return items.map((v) => this.mapEvent(v));
     }
 

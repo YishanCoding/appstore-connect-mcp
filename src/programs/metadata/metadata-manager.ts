@@ -24,11 +24,20 @@ export class MetadataManager {
 
     // ── AppStoreVersionLocalizations ──────────────────────────────────────
 
-    public async listVersionLocalizations(appStoreVersionId: string): Promise<LocalizationInfo[]> {
-        const response = await this.client.get<AppVersionLocalizationsResponse>(
-            `/appStoreVersions/${appStoreVersionId}/appStoreVersionLocalizations`
-        );
-        return response.data.map((loc) => this.mapVersionLocToInfo(loc));
+    public async listVersionLocalizations(
+        appStoreVersionId: string,
+        options?: { all?: boolean; limit?: number }
+    ): Promise<LocalizationInfo[]> {
+        const path = `/appStoreVersions/${appStoreVersionId}/appStoreVersionLocalizations`;
+        if (options?.all) {
+            const items = await this.client.getAllPages(path, {}, { limit: options.limit });
+            return items.map((loc) => this.mapVersionLocToInfo(loc));
+        }
+        const response = await this.client.get<AppVersionLocalizationsResponse>(path, {
+            limit: Math.min(options?.limit ?? 200, 200),
+        });
+        const data = options?.limit ? response.data.slice(0, options.limit) : response.data;
+        return data.map((loc) => this.mapVersionLocToInfo(loc));
     }
 
     public async updateVersionLocalization(
@@ -86,7 +95,10 @@ export class MetadataManager {
 
     // ── AppInfoLocalizations (name, subtitle) ─────────────────────────────
 
-    public async listAppInfoLocalizations(appId: string): Promise<AppInfoLocalizationInfo[]> {
+    public async listAppInfoLocalizations(
+        appId: string,
+        options?: { all?: boolean; limit?: number }
+    ): Promise<AppInfoLocalizationInfo[]> {
         // Each app has multiple appInfos — typically one EDITABLE (for the next
         // unsubmitted version) and one tied to the live READY_FOR_SALE version.
         // Live appInfo's name/subtitle is locked; only the EDITABLE one can be
@@ -101,10 +113,14 @@ export class MetadataManager {
         let chosen = infos.find((i: any) => editableStates.includes(i.attributes?.appStoreState));
         if (!chosen) chosen = infos[0];
 
-        const response = await this.client.get<AppInfoLocalizationsResponse>(
-            `/appInfos/${chosen.id}/appInfoLocalizations`
-        );
-        return response.data.map((loc) => this.mapAppInfoLocToInfo(loc));
+        const path = `/appInfos/${chosen.id}/appInfoLocalizations`;
+        if (options?.all) {
+            const items = await this.client.getAllPages(path, {}, { limit: options.limit });
+            return items.map((loc) => this.mapAppInfoLocToInfo(loc));
+        }
+        const response = await this.client.get<AppInfoLocalizationsResponse>(path);
+        const data = options?.limit ? response.data.slice(0, options.limit) : response.data;
+        return data.map((loc) => this.mapAppInfoLocToInfo(loc));
     }
 
     public async updateAppInfoLocalization(

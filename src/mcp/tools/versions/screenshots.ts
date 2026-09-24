@@ -33,7 +33,7 @@ function md5File(path: string): string {
     return createHash('md5').update(data).digest('hex');
 }
 
-async function uploadScreenshot(client: AppStoreConnectClient, setId: string, filePath: string): Promise<string> {
+export async function uploadScreenshot(client: AppStoreConnectClient, setId: string, filePath: string): Promise<string> {
     const fileSize = statSync(filePath).size;
     const fileName = basename(filePath);
     const checksum = md5File(filePath);

@@ -5,14 +5,14 @@ import { BuildInfo } from '../../types.js';
 export class BuildManager {
     constructor(private client: AppStoreConnectClient) {}
 
-    public async listBuilds(appId: string, limit: number = 100): Promise<BuildInfo[]> {
-        const response = await this.client.get<BuildsResponse>('/builds', {
-            'filter[app]': appId,
-            limit,
-            sort: '-uploadedDate',
-        });
-
-        return response.data.map((build) => this.mapBuildToInfo(build));
+    public async listBuilds(appId: string, limit: number = 100, options?: { all?: boolean }): Promise<BuildInfo[]> {
+        const params = { 'filter[app]': appId, sort: '-uploadedDate', limit: Math.min(limit, 200) };
+        if (options?.all) {
+            const items = await this.client.getAllPages<Build>('/builds', params, { limit });
+            return items.map((build) => this.mapBuildToInfo(build));
+        }
+        const response = await this.client.get<BuildsResponse>('/builds', params);
+        return response.data.slice(0, limit).map((build) => this.mapBuildToInfo(build));
     }
 
     public async getBuild(buildId: string): Promise<BuildInfo> {

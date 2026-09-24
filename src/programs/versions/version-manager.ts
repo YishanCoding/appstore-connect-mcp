@@ -13,12 +13,24 @@ import {
 export class VersionManager {
     constructor(private client: AppStoreConnectClient) {}
 
-    public async listVersions(appId: string, platform = 'IOS'): Promise<VersionInfo[]> {
+    public async listVersions(
+        appId: string,
+        platform = 'IOS',
+        options?: { all?: boolean; limit?: number }
+    ): Promise<VersionInfo[]> {
+        const params = { 'filter[platform]': platform };
+        if (options?.all) {
+            const items = await this.client.getAllPages(`/apps/${appId}/appStoreVersions`, params, {
+                limit: options.limit,
+            });
+            return items.map((v) => this.mapToInfo(v));
+        }
         const response = await this.client.get<AppStoreVersionsResponse>(
             `/apps/${appId}/appStoreVersions`,
-            { 'filter[platform]': platform }
+            params
         );
-        return response.data.map((v) => this.mapToInfo(v));
+        const data = options?.limit ? response.data.slice(0, options.limit) : response.data;
+        return data.map((v) => this.mapToInfo(v));
     }
 
     public async getVersion(versionId: string): Promise<VersionInfo> {

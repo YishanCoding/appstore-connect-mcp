@@ -12,14 +12,18 @@ import {
 export class IapManager {
     constructor(private client: AppStoreConnectClient) {}
 
-    public async listInAppPurchases(appId: string, limit: number = 200): Promise<InAppPurchaseInfo[]> {
-        const items = await this.client.followPages<InAppPurchasesV2Response>(
-            `/apps/${appId}/inAppPurchasesV2`,
-            { limit },
-            limit
-        );
-
-        return items.map((item) => this.mapInAppPurchase(item as InAppPurchaseV2));
+    public async listInAppPurchases(
+        appId: string,
+        limit: number = 200,
+        options?: { all?: boolean }
+    ): Promise<InAppPurchaseInfo[]> {
+        const path = `/apps/${appId}/inAppPurchasesV2`;
+        if (options?.all === false) {
+            const response = await this.client.get<InAppPurchasesV2Response>(path, { limit: Math.min(limit, 200) });
+            return (response.data ?? []).slice(0, limit).map((item) => this.mapInAppPurchase(item as InAppPurchaseV2));
+        }
+        const items = await this.client.getAllPages<InAppPurchaseV2>(path, { limit: Math.min(limit, 200) }, { limit });
+        return items.map((item) => this.mapInAppPurchase(item));
     }
 
     public async getInAppPurchase(inAppPurchaseId: string): Promise<InAppPurchaseInfo> {
@@ -30,14 +34,18 @@ export class IapManager {
         return this.mapInAppPurchase(response.data);
     }
 
-    public async listSubscriptionGroups(appId: string, limit: number = 200): Promise<SubscriptionGroupInfo[]> {
-        const items = await this.client.followPages<SubscriptionGroupsResponse>(
-            `/apps/${appId}/subscriptionGroups`,
-            { limit },
-            limit
-        );
-
-        return items.map((item) => this.mapSubscriptionGroup(item as SubscriptionGroup));
+    public async listSubscriptionGroups(
+        appId: string,
+        limit: number = 200,
+        options?: { all?: boolean }
+    ): Promise<SubscriptionGroupInfo[]> {
+        const path = `/apps/${appId}/subscriptionGroups`;
+        if (options?.all === false) {
+            const response = await this.client.get<SubscriptionGroupsResponse>(path, { limit: Math.min(limit, 200) });
+            return (response.data ?? []).slice(0, limit).map((item) => this.mapSubscriptionGroup(item));
+        }
+        const items = await this.client.getAllPages<SubscriptionGroup>(path, { limit: Math.min(limit, 200) }, { limit });
+        return items.map((item) => this.mapSubscriptionGroup(item));
     }
 
     private mapInAppPurchase(item: InAppPurchaseV2): InAppPurchaseInfo {

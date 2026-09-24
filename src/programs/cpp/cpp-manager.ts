@@ -26,17 +26,21 @@ export class CppManager {
         private appId: string
     ) {}
 
-    public async listCpps(): Promise<CppInfo[]> {
-        const resp = await this.client.get<ListCppsResponse>(
-            `/apps/${this.appId}/appCustomProductPages`,
-            { limit: 200 }
-        );
-        return resp.data.map((d) => ({
+    public async listCpps(options?: { all?: boolean; limit?: number }): Promise<CppInfo[]> {
+        const path = `/apps/${this.appId}/appCustomProductPages`;
+        const map = (d: ListCppsResponse['data'][number]): CppInfo => ({
             id: d.id,
             name: d.attributes.name,
             state: d.attributes.state,
             url: `https://apps.apple.com/us/app/id${this.appId}?ppid=${d.id}`,
-        }));
+        });
+        if (options?.all) {
+            const items = await this.client.getAllPages<ListCppsResponse['data'][number]>(path, {}, { limit: options.limit });
+            return items.map(map);
+        }
+        const resp = await this.client.get<ListCppsResponse>(path, { limit: Math.min(options?.limit ?? 200, 200) });
+        const data = options?.limit ? resp.data.slice(0, options.limit) : resp.data;
+        return data.map(map);
     }
 
     public async deleteCpp(cppId: string): Promise<void> {
