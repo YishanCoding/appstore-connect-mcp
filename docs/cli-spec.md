@@ -96,6 +96,10 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
 | F-05 | 读请求 `Retry-After` 超过 60 秒直接报错；axios 超时 60 秒 | 服务端要求等待超过 60 秒，或请求挂住超过 60 秒 | 原来 `Retry-After: 86400` 会让进程睡 24 小时 |
 | F-06 | 错误文本由共享的 `errorFromResponse` 生成，格式与 origin/main 相同（多条 errors 用 `, ` 拼接） | 无文本变化；只是生成位置从 axios 拦截器移到了共享策略层 | 保证 MCP 错误文本与 origin/main 一致 |
 | R2-F08 | `upload_screenshots` / `create_cpp` 在删除或上传前检查本地文件：必须存在、可读、是普通文件且大小 > 0 | 传了不存在的路径、目录或空文件：MCP 现在直接报错，不再先删掉线上截图再失败 | 原来会先删线上截图集，再在读文件时报 EISDIR/ENOENT，造成数据丢失 |
+| 3e6b711 / d9d6479 | 截图和 CPP 截图的提交 PATCH 只发一次，不再失败后隔 3 秒重试 3 次；所有写请求都不重试 | 提交 PATCH 偶发失败时 MCP 直接报错 | 写请求重试可能重复提交；与 CLI "写不重试" 一致 |
+| 共享客户端 | 读请求遇到 429/5xx 最多重试 3 次，按 `Retry-After` 或指数退避等待（origin/main 不重试） | 限流或服务端 5xx 时 MCP 的读请求会多等几次再报错 | CLI 与 MCP 共用 `sendWithPolicy` |
+| 共享客户端 | 抛出的错误类型从 `Error` 变成 `AscHttpError`（message 文本不变，见 F-06）；review 相关的 404 判断同时认两种错误 | 只有按错误类型判断的调用方可见；MCP 返回给模型的文本不变 | 统一退出码映射 |
+| 列表分页 | 各 list 方法把单页 `limit` 限制在 200 以内、结果再截到上限；`review list` 首页请求的 `limit` 参数由 100 变 200（返回条数上限仍是 100） | MCP 传入 `limit > 200` 时不再被 Apple 400 拒绝，而是按 200 一页取；请求参数与 origin/main 略有不同 | Apple 单页上限 200 |
 | R3 | `getAllPages` 只跟随 host 为 `api.appstoreconnect.apple.com` 的 `links.next`，其他 host 直接报错 | 服务端返回别的域名的翻页链接（正常不会发生） | 防止把 JWT 发到别的域名 |
 
 以下是 MCP 原有、本 PR 没有改的问题（端点不在 Apple OpenAPI 4.5 里）：`version submit` 的 `POST /appStoreReviewRequests`、`version cancel` 的 `DELETE /appStoreReviewRequests/{id}`（Apple 现在的提交/取消走 `reviewSubmissions`）、`event submit` 的 `POST /appEventSubmissions`、`review reply` 在已有回复时发的 `PATCH /customerReviewResponses/{id}`（规范里只有 GET/DELETE）。

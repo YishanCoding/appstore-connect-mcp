@@ -44,6 +44,8 @@ export interface BindContext {
     app?: string;
     /** --version-id (phased-release update/delete). */
     versionId?: string;
+    /** --confirm, only used to render confirm_reads in dry-run. */
+    confirm?: string;
 }
 
 export interface BindRead {
@@ -118,7 +120,13 @@ export function bindingReads(toolName: string, args: Record<string, unknown>, ct
         return [{ method: 'GET', path: `/appCustomProductPages/${id(args.cppId)}`, params: { include: 'app' } }];
     }
     if (EVENT_TOOLS.has(toolName)) {
-        return [{ method: 'GET', path: '/apps/{--confirm}/appEvents', params: { 'filter[id]': String(args.eventId ?? '') }, note: '跟随 links.next 读完，结果里必须有这个 eventId' }];
+        const app = ctx.confirm ? id(ctx.confirm) : '{--confirm}';
+        return [{
+            method: 'GET',
+            path: `/apps/${app}/appEvents`,
+            params: { 'filter[id]': String(args.eventId ?? ''), limit: 200 },
+            note: '跟随 links.next 读完，结果里必须有这个 eventId（Apple 会忽略 filter[id]）',
+        }];
     }
     return [];
 }

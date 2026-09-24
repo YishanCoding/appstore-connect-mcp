@@ -86,7 +86,7 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
             bindVersionId = String(parsed.flags.versionId);
             delete parsed.flags.versionId;
         }
-        const bindCtx: BindContext = { app: parsed.app, versionId: bindVersionId };
+        const bindCtx: BindContext = { app: parsed.app, versionId: bindVersionId, confirm: parsed.confirm };
 
         const rest = commandPositionals(entry, parsed.positionals);
         const built = buildArgs(entry.tool.inputSchema, parsed, rest, entry.meta.idParam);

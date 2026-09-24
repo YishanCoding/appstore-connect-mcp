@@ -1058,6 +1058,9 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
         const review = json((await runCli(['review', 'reply', 'R1', '--response-body', 'x'], { env, transport: appleTransport(world()) })).stdout);
         expect(review.confirm_reads).toEqual([]);
         expect(review.confirm_note).toContain('--app');
+        const event = json((await runCli(['event', 'delete', 'E1', '--confirm', 'APP'])).stdout);
+        expect(event.confirm_reads[0].path).toBe('/apps/APP/appEvents');
+        expect(event.confirm_reads[0].params).toEqual({ 'filter[id]': 'E1', limit: 200 });
         const normal = json((await runCli(['version', 'update-localization', 'L1', '--whats-new', 'x'])).stdout);
         expect(normal.confirm_reads).toBeUndefined();
     });
