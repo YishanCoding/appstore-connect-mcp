@@ -1,9 +1,11 @@
-import { AppStoreConnectClient } from '../api-client/index.js';
-import { CustomerReviewsResponse, ReviewInfo } from './types.js';
 import { AxiosError } from 'axios';
+import { AppStoreConnectClient } from '../api-client/index.js';
+import { AscHttpError } from '../api-client/policy.js';
+import { CustomerReviewsResponse, ReviewInfo } from './types.js';
 
 function isNotFound(e: unknown): boolean {
-    return (e instanceof AxiosError && e.response?.status === 404);
+    if (e instanceof AscHttpError) return e.status === 404;
+    return e instanceof AxiosError && e.response?.status === 404;
 }
 
 export class ReviewManager {

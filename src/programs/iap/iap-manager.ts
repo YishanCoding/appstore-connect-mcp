@@ -14,15 +14,17 @@ export class IapManager {
 
     public async listInAppPurchases(
         appId: string,
-        limit: number = 200,
+        limit?: number,
         options?: { all?: boolean }
     ): Promise<InAppPurchaseInfo[]> {
         const path = `/apps/${appId}/inAppPurchasesV2`;
+        const cap = options?.all ? limit : (limit ?? 200);
+        const pageSize = Math.min(cap ?? 200, 200);
         if (options?.all === false) {
-            const response = await this.client.get<InAppPurchasesV2Response>(path, { limit: Math.min(limit, 200) });
-            return (response.data ?? []).slice(0, limit).map((item) => this.mapInAppPurchase(item as InAppPurchaseV2));
+            const response = await this.client.get<InAppPurchasesV2Response>(path, { limit: pageSize });
+            return (response.data ?? []).slice(0, cap ?? pageSize).map((item) => this.mapInAppPurchase(item as InAppPurchaseV2));
         }
-        const items = await this.client.getAllPages<InAppPurchaseV2>(path, { limit: Math.min(limit, 200) }, { limit });
+        const items = await this.client.getAllPages<InAppPurchaseV2>(path, { limit: pageSize }, { limit: cap });
         return items.map((item) => this.mapInAppPurchase(item));
     }
 
@@ -36,15 +38,17 @@ export class IapManager {
 
     public async listSubscriptionGroups(
         appId: string,
-        limit: number = 200,
+        limit?: number,
         options?: { all?: boolean }
     ): Promise<SubscriptionGroupInfo[]> {
         const path = `/apps/${appId}/subscriptionGroups`;
+        const cap = options?.all ? limit : (limit ?? 200);
+        const pageSize = Math.min(cap ?? 200, 200);
         if (options?.all === false) {
-            const response = await this.client.get<SubscriptionGroupsResponse>(path, { limit: Math.min(limit, 200) });
-            return (response.data ?? []).slice(0, limit).map((item) => this.mapSubscriptionGroup(item));
+            const response = await this.client.get<SubscriptionGroupsResponse>(path, { limit: pageSize });
+            return (response.data ?? []).slice(0, cap ?? pageSize).map((item) => this.mapSubscriptionGroup(item));
         }
-        const items = await this.client.getAllPages<SubscriptionGroup>(path, { limit: Math.min(limit, 200) }, { limit });
+        const items = await this.client.getAllPages<SubscriptionGroup>(path, { limit: pageSize }, { limit: cap });
         return items.map((item) => this.mapSubscriptionGroup(item));
     }
 

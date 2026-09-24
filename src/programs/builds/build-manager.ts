@@ -5,14 +5,15 @@ import { BuildInfo } from '../../types.js';
 export class BuildManager {
     constructor(private client: AppStoreConnectClient) {}
 
-    public async listBuilds(appId: string, limit: number = 100, options?: { all?: boolean }): Promise<BuildInfo[]> {
-        const params = { 'filter[app]': appId, sort: '-uploadedDate', limit: Math.min(limit, 200) };
+    public async listBuilds(appId: string, limit?: number, options?: { all?: boolean }): Promise<BuildInfo[]> {
+        const cap = options?.all ? limit : (limit ?? 100);
+        const params = { 'filter[app]': appId, sort: '-uploadedDate', limit: Math.min(cap ?? 200, 200) };
         if (options?.all) {
-            const items = await this.client.getAllPages<Build>('/builds', params, { limit });
+            const items = await this.client.getAllPages<Build>('/builds', params, { limit: cap });
             return items.map((build) => this.mapBuildToInfo(build));
         }
         const response = await this.client.get<BuildsResponse>('/builds', params);
-        return response.data.slice(0, limit).map((build) => this.mapBuildToInfo(build));
+        return response.data.slice(0, cap ?? 100).map((build) => this.mapBuildToInfo(build));
     }
 
     public async getBuild(buildId: string): Promise<BuildInfo> {
@@ -35,15 +36,25 @@ export class BuildManager {
         return this.mapBuildToInfo(response.data[0]!);
     }
 
-    public async getBuildsByVersion(appId: string, version: string, limit: number = 50): Promise<BuildInfo[]> {
-        const response = await this.client.get<BuildsResponse>('/builds', {
+    public async getBuildsByVersion(
+        appId: string,
+        version: string,
+        limit?: number,
+        options?: { all?: boolean }
+    ): Promise<BuildInfo[]> {
+        const cap = options?.all ? limit : (limit ?? 50);
+        const params = {
             'filter[app]': appId,
             'filter[version]': version,
             sort: '-uploadedDate',
-            limit,
-        });
-
-        return response.data.map((build) => this.mapBuildToInfo(build));
+            limit: Math.min(cap ?? 200, 200),
+        };
+        if (options?.all) {
+            const items = await this.client.getAllPages<Build>('/builds', params, { limit: cap });
+            return items.map((build) => this.mapBuildToInfo(build));
+        }
+        const response = await this.client.get<BuildsResponse>('/builds', params);
+        return response.data.slice(0, cap ?? 50).map((build) => this.mapBuildToInfo(build));
     }
 
     public async getBuildBetaDetail(buildId: string) {

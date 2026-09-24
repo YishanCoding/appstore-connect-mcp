@@ -69,7 +69,6 @@ export async function uploadScreenshot(client: AppStoreConnectClient, setId: str
         });
     }
 
-    // Step 3: Commit with checksum (retry up to 3×)
     const commitBody = {
         data: {
             type: 'appScreenshots',
@@ -77,15 +76,7 @@ export async function uploadScreenshot(client: AppStoreConnectClient, setId: str
             attributes: { uploaded: true, sourceFileChecksum: checksum },
         },
     };
-    for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-            await client.patch(`/appScreenshots/${shotId}`, commitBody);
-            break;
-        } catch (e) {
-            if (attempt === 2) throw e;
-            await new Promise((r) => setTimeout(r, 3000));
-        }
-    }
+    await client.patch(`/appScreenshots/${shotId}`, commitBody);
 
     return shotId;
 }

@@ -48,7 +48,7 @@ ascli smoke --output /tmp/ascli-smoke.json
 ## 已知问题
 
 - Analytics 的 `by-source` 和 `export` 依赖 opencli 里已经登录的 App Store Connect 浏览器会话，失败时通常是会话而不是 API key。
-- 截图上传在 MCP 工具内部对提交 PATCH 最多重试 3 次。共享 HTTP 客户端对写请求不重试；读请求才对 429/5xx 最多重试 3 次。
+- 写请求（含截图提交 PATCH）只发一次。读请求对 429/5xx 最多重试 3 次，并遵守 `Retry-After`。
 - MCP 的批量 localization 会把单条失败收进结果对象并仍返回成功。CLI 遇到第一条失败就退出码 3。
 - 每次请求都会重新签 JWT，没有进程内缓存。
 - `store-credentials` 没有 CLI 命令。CLI 不保存凭据。

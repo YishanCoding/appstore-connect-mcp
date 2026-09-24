@@ -4,6 +4,8 @@ import { join } from 'path';
 import { describe, expect, test } from 'bun:test';
 import { AppStoreConnectClient } from '../programs/api-client/client.js';
 import { AscHttpError, sendWithPolicy, type HttpCall, type HttpResult } from '../programs/api-client/policy.js';
+import { ReviewManager } from '../programs/reviews/review-manager.js';
+import { uploadScreenshot } from '../mcp/tools/versions/screenshots.js';
 import { projectFields } from './output.js';
 import { runCli } from './run.js';
 import { decideSafety } from './safety.js';
@@ -275,5 +277,154 @@ describe('http policy', () => {
         const page = await capped.getAllPages<{ id: string }>('/reviews', {}, { limit: 1 });
         expect(page).toEqual([{ id: 'only' }]);
         expect(limited).toBe(1);
+    });
+});
+
+describe('review response 404', () => {
+    function clientFor(handler: (call: HttpCall) => HttpResult) {
+        return new AppStoreConnectClient(
+            { keyId: 'k', issuerId: 'i', privateKey: 'p' },
+            { transport: { send: async (call) => handler(call) } }
+        );
+    }
+
+    test('404 on the existing response still creates, and delete is a no-op', async () => {
+        const calls: HttpCall[] = [];
+        const client = clientFor((call) => {
+            calls.push(call);
+            if (call.method === 'GET') {
+                return { status: 404, headers: {}, data: { errors: [{ status: '404', code: 'NOT_FOUND', title: 'The specified resource does not exist' }] } };
+            }
+            return { status: 201, headers: {}, data: { data: { id: 'created' } } };
+        });
+        const reviews = new ReviewManager(client);
+        await reviews.respondToReview('rev-1', 'thanks');
+        expect(calls.map((call) => call.method)).toEqual(['GET', 'POST']);
+        expect(calls[1]?.url).toBe('/customerReviewResponses');
+
+        calls.length = 0;
+        await reviews.deleteReviewResponse('rev-1');
+        expect(calls.map((call) => call.method)).toEqual(['GET']);
+    });
+
+    test('a non-404 on the existing response is not turned into a create', async () => {
+        const calls: HttpCall[] = [];
+        const client = clientFor((call) => {
+            calls.push(call);
+            return { status: 500, headers: {}, data: { errors: [{ status: '500', code: 'SERVER', title: 'down' }] } };
+        });
+        await expect(new ReviewManager(client).respondToReview('rev-1', 'thanks')).rejects.toBeInstanceOf(AscHttpError);
+        expect(calls.every((call) => call.method === 'GET')).toBe(true);
+        expect(calls.length).toBe(4);
+    });
+});
+
+describe('--all ignores schema default limits', () => {
+    function paged(count: number) {
+        const calls: HttpCall[] = [];
+        let page = 0;
+        const transport = {
+            calls,
+            async send(call: HttpCall): Promise<HttpResult> {
+                calls.push(call);
+                page += 1;
+                if (page === 1) {
+                    return {
+                        status: 200,
+                        headers: {},
+                        data: {
+                            data: Array.from({ length: count }, (_, index) => ({
+                                id: `p1-${index}`,
+                                attributes: {
+                                    version: '1',
+                                    processingState: 'VALID',
+                                    uploadedDate: '2026-01-01',
+                                    expirationDate: '2026-02-01',
+                                    expired: false,
+                                    minOsVersion: '15',
+                                    username: 'u',
+                                    firstName: 'A',
+                                    lastName: 'B',
+                                    roles: [],
+                                    email: 'a@example.com',
+                                    inviteType: 'EMAIL',
+                                    state: 'ACTIVE',
+                                },
+                            })),
+                            links: { next: 'https://example.test/next' },
+                        },
+                    };
+                }
+                return {
+                    status: 200,
+                    headers: {},
+                    data: {
+                        data: [{
+                            id: 'extra',
+                            attributes: {
+                                version: '1',
+                                processingState: 'VALID',
+                                uploadedDate: '2026-01-01',
+                                expirationDate: '2026-02-01',
+                                expired: false,
+                                minOsVersion: '15',
+                                username: 'u',
+                                firstName: 'A',
+                                lastName: 'B',
+                                roles: [],
+                                email: 'a@example.com',
+                                inviteType: 'EMAIL',
+                                state: 'ACTIVE',
+                            },
+                        }],
+                    },
+                };
+            },
+        };
+        return transport;
+    }
+
+    test('build, user, tester, iap, and subscription lists follow the next page', async () => {
+        const cases: { args: string[]; firstPage: number }[] = [
+            { args: ['build', 'list', '--app', 'app-1', '--all'], firstPage: 100 },
+            { args: ['user', 'list', '--all'], firstPage: 200 },
+            { args: ['beta-tester', 'list', '--beta-group-id', 'grp-1', '--all'], firstPage: 200 },
+            { args: ['in-app-purchase', 'list', '--app', 'app-1', '--all'], firstPage: 200 },
+            { args: ['subscription-group', 'list', '--app', 'app-1', '--all'], firstPage: 200 },
+        ];
+        for (const item of cases) {
+            const transport = paged(item.firstPage);
+            const result = await runCli(item.args, { env, transport });
+            expect(result.code).toBe(0);
+            const rows = json(result.stdout) as { id: string }[];
+            expect(rows.length).toBe(item.firstPage + 1);
+            expect(transport.calls.length).toBe(2);
+            expect(rows[rows.length - 1]?.id).toBe('extra');
+        }
+    });
+});
+
+describe('screenshot commit', () => {
+    test('the commit PATCH is sent once', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'ascli-shot-'));
+        const file = join(dir, 'shot.png');
+        writeFileSync(file, 'png');
+        const calls: HttpCall[] = [];
+        const client = new AppStoreConnectClient(
+            { keyId: 'k', issuerId: 'i', privateKey: 'p' },
+            {
+                transport: {
+                    async send(call) {
+                        calls.push(call);
+                        if (call.method === 'POST') {
+                            return { status: 201, headers: {}, data: { data: { id: 'shot-1', attributes: { uploadOperations: [] } } } };
+                        }
+                        return { status: 500, headers: {}, data: { errors: [{ status: '500', code: 'SERVER', title: 'commit failed' }] } };
+                    },
+                },
+            }
+        );
+        await expect(uploadScreenshot(client, 'set-1', file)).rejects.toBeInstanceOf(AscHttpError);
+        expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(1);
     });
 });

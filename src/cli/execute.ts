@@ -49,13 +49,13 @@ export async function executeTool(
             return { success: true, message: 'Credentials are valid', appsFound: listed.length };
         }
         case 'appstore_list_builds':
-            return builds.listBuilds(args.appId, page.limit ?? args.limit ?? 100, { all: page.all });
+            return builds.listBuilds(args.appId, capFor(page, args.limit), { all: page.all });
         case 'appstore_get_build':
             return builds.getBuild(args.buildId);
         case 'appstore_get_latest_build':
             return builds.getLatestBuild(args.appId);
         case 'appstore_list_builds_by_version':
-            return builds.getBuildsByVersion(args.appId, args.version, page.limit ?? args.limit ?? 50);
+            return builds.getBuildsByVersion(args.appId, args.version, capFor(page, args.limit), { all: page.all });
         case 'appstore_get_build_beta_detail':
             return builds.getBuildBetaDetail(args.buildId);
         case 'appstore_update_build_beta_detail':
@@ -182,7 +182,7 @@ export async function executeTool(
         case 'appstore_submit_event':
             return events.submitEvent(args.eventId);
         case 'appstore_list_users':
-            return users.listUsers(page.limit ?? args.limit ?? 200, { all: page.all });
+            return users.listUsers(capFor(page, args.limit), { all: page.all });
         case 'appstore_invite_user':
             await users.inviteUser(args.email, args.firstName, args.lastName, args.roles, args.allAppsVisible, args.provisioningAllowed);
             return { success: true };
@@ -201,7 +201,7 @@ export async function executeTool(
             await flight.removeBuildFromBetaGroup(args.buildId, args.betaGroupId);
             return { success: true };
         case 'appstore_list_beta_testers':
-            return flight.listBetaTesters(args.betaGroupId, page.limit ?? args.limit ?? 200, { all: page.all });
+            return flight.listBetaTesters(args.betaGroupId, capFor(page, args.limit), { all: page.all });
         case 'appstore_add_beta_tester':
             await flight.addBetaTester(args.email, args.firstName, args.lastName, args.betaGroupIds);
             return { success: true };
@@ -212,11 +212,11 @@ export async function executeTool(
                 'locale', 'description', 'feedbackEmail', 'marketingUrl', 'privacyPolicyUrl',
             ]));
         case 'appstore_list_in_app_purchases':
-            return iap.listInAppPurchases(args.appId, page.limit ?? args.limit ?? 200, { all: page.all });
+            return iap.listInAppPurchases(args.appId, capFor(page, args.limit), { all: page.all });
         case 'appstore_get_in_app_purchase':
             return iap.getInAppPurchase(args.inAppPurchaseId);
         case 'appstore_list_subscription_groups':
-            return iap.listSubscriptionGroups(args.appId, page.limit ?? args.limit ?? 200, { all: page.all });
+            return iap.listSubscriptionGroups(args.appId, capFor(page, args.limit), { all: page.all });
         case 'appstore_get_analytics_by_source': {
             const manager = new AnalyticsManager();
             const result = await manager.getBySourceType(args.adamId, args.startDate, args.endDate, args.frequency);
@@ -238,6 +238,12 @@ export async function executeTool(
         default:
             throw new Error(`未实现的命令: ${name}`);
     }
+}
+
+/** --all ignores zod default limits. A cap applies only when the user passed --limit. */
+function capFor(page: PageOpts, schemaLimit: number | undefined): number | undefined {
+    if (page.all) return page.limit;
+    return page.limit ?? schemaLimit;
 }
 
 function pick<T extends Record<string, any>>(args: T, keys: string[]): any {

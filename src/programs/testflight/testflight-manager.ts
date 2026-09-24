@@ -53,16 +53,18 @@ export class TestFlightManager {
 
     public async listBetaTesters(
         betaGroupId: string,
-        limit: number = 200,
+        limit?: number,
         options?: { all?: boolean }
     ): Promise<BetaTesterInfo[]> {
+        const cap = options?.all ? limit : (limit ?? 200);
+        const pageSize = Math.min(cap ?? 200, 200);
         const path = `/betaGroups/${betaGroupId}/betaTesters`;
         if (options?.all) {
-            const items = await this.client.getAllPages<BetaTester>(path, { limit: Math.min(limit, 200) }, { limit });
+            const items = await this.client.getAllPages<BetaTester>(path, { limit: pageSize }, { limit: cap });
             return items.map((t) => this.mapBetaTesterToInfo(t));
         }
-        const response = await this.client.get<BetaTestersResponse>(path, { limit: Math.min(limit, 200) });
-        return response.data.slice(0, limit).map((t) => this.mapBetaTesterToInfo(t));
+        const response = await this.client.get<BetaTestersResponse>(path, { limit: pageSize });
+        return response.data.slice(0, cap ?? 200).map((t) => this.mapBetaTesterToInfo(t));
     }
 
     public async addBetaTester(email: string, firstName: string, lastName: string, betaGroupIds: string[]) {
