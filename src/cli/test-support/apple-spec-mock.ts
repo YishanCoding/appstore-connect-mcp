@@ -16,6 +16,8 @@ interface SpecPath {
     methods: string[];
     include?: string[];
     filter?: string[];
+    /** Relationship names a create/update body must include. */
+    relationships?: string[];
 }
 
 const SPEC = JSON.parse(readFileSync(fileURLToPath(new URL('./apple-openapi-paths.json', import.meta.url)), 'utf8')) as {
@@ -37,7 +39,7 @@ export interface AppleWorld {
     cppLocalizations?: Record<string, { cppVersion: string }>;
     cppVersions?: Record<string, { cpp: string }>;
     cpps?: Record<string, { app: string }>;
-    reviews?: Record<string, { response?: string }>;
+    reviews?: Record<string, { response?: string; app?: string }>;
     users?: Record<string, { username?: string; email?: string }>;
 }
 
@@ -76,18 +78,54 @@ export function specViolation(call: HttpCall): HttpResult | undefined {
     if (!matched) return error(404, 'NOT_FOUND', 'The path provided does not match a defined resource type.');
     const spec = SPEC.paths[matched.template]!;
     if (!spec.methods.includes(call.method)) return error(405, 'METHOD_NOT_ALLOWED', `${call.method} is not allowed on ${matched.template}`);
-    if (call.method !== 'GET') return undefined;
-    for (const [key, value] of Object.entries(call.params ?? {})) {
-        if (key === 'include') {
-            for (const name of String(value).split(',')) {
-                if (!spec.include?.includes(name)) {
-                    return error(400, 'PARAMETER_ERROR.INVALID', `'${name}' is not a valid relationship name`);
-                }
+    if (call.method === 'POST' || call.method === 'PATCH') {
+        const raw = call.data as { data?: unknown } | null | undefined;
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return error(400, 'ENTITY_ERROR', 'Expected a JSON:API document');
+        }
+        if (Array.isArray(raw.data)) {
+            const bad = raw.data.some((item) => {
+                const row = item as { type?: unknown; id?: unknown } | null;
+                return !row || typeof row.type !== 'string' || typeof row.id !== 'string';
+            });
+            if (bad) return error(400, 'ENTITY_ERROR', 'relationship linkage requires type and id');
+        } else {
+            const data = raw.data as { type?: unknown; attributes?: unknown; relationships?: Record<string, unknown> } | null;
+            if (!data || typeof data !== 'object') return error(400, 'ENTITY_ERROR', 'data is required');
+            if (typeof data.type !== 'string' || !data.type) return error(400, 'ENTITY_ERROR', 'data.type is required');
+            if (!data.attributes || typeof data.attributes !== 'object' || Array.isArray(data.attributes)) {
+                return error(400, 'ENTITY_ERROR', 'data.attributes is required');
+            }
+            for (const name of spec.relationships ?? []) {
+                if (!data.relationships?.[name]) return error(400, 'ENTITY_ERROR', `relationships.${name} is required`);
             }
         }
-        const filter = /^filter\[(.+)\]$/.exec(key);
-        if (filter && !spec.filter?.includes(filter[1]!)) {
-            return error(400, 'PARAMETER_ERROR.INVALID', `'${filter[1]}' is not a valid filter type`);
+    }
+    if (call.method === 'GET') {
+        const query = path.split('?')[1] ?? '';
+        const fromUrl: Record<string, string> = {};
+        for (const part of query.split('&')) {
+            if (!part) continue;
+            const eq = part.indexOf('=');
+            const rawKey = eq === -1 ? part : part.slice(0, eq);
+            const rawValue = eq === -1 ? '' : part.slice(eq + 1);
+            fromUrl[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue);
+        }
+        const bags = [fromUrl, call.params ?? {}];
+        for (const bag of bags) {
+            for (const [key, value] of Object.entries(bag)) {
+                if (key === 'include') {
+                    for (const name of String(value).split(',')) {
+                        if (name && !spec.include?.includes(name)) {
+                            return error(400, 'PARAMETER_ERROR.INVALID', `'${name}' is not a valid relationship name`);
+                        }
+                    }
+                }
+                const filter = /^filter\[(.+)\]$/.exec(key);
+                if (filter && !spec.filter?.includes(filter[1]!)) {
+                    return error(400, 'PARAMETER_ERROR.INVALID', `'${filter[1]}' is not a valid filter type`);
+                }
+            }
         }
     }
     return undefined;
@@ -176,6 +214,14 @@ function answer(call: HttpCall, world: AppleWorld): HttpResult {
             if (!cpp) return notFound();
             return resource('appCustomProductPages', id, { app: { type: 'apps', id: cpp.app } }, call);
         }
+        case '/apps/{id}/customerReviews': {
+            const reviews = Object.entries(world.reviews ?? {}).filter(([, review]) => review.app === id);
+            return {
+                status: 200,
+                headers: {},
+                data: { data: reviews.map(([reviewId]) => ({ type: 'customerReviews', id: reviewId })), links: {} },
+            };
+        }
         case '/apps/{id}/appEvents': {
             // Apple ignores filter[id] on this endpoint: always the whole list.
             const events = world.apps?.[id]?.events ?? [];
@@ -209,7 +255,18 @@ export function appleTransport(world: AppleWorld, calls: HttpCall[] = []) {
             if (call.method === 'GET') return answer(call, world);
             if (call.method === 'DELETE') return { status: 204, headers: {}, data: undefined };
             if (call.method === 'POST') {
-                return { status: 201, headers: {}, data: { data: { id: 'created-1', attributes: { uploadOperations: [] } } } };
+                return {
+                    status: 201,
+                    headers: {},
+                    data: {
+                        data: {
+                            id: 'created-1',
+                            attributes: {
+                                uploadOperations: [{ method: 'PUT', url: 'http://127.0.0.1:1/part', offset: 0, length: 1 }],
+                            },
+                        },
+                    },
+                };
             }
             return { status: 200, headers: {}, data: { data: { id: 'patched-1' } } };
         },

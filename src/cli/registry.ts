@@ -134,7 +134,7 @@ export function helpText(resource?: string, verb?: string): string {
             ? '高风险：--yes 之外还要 --confirm <app-id>。写入前按 Apple 规范里的关系链只读 GET 目标资源，确认所属 app 与 --confirm 一致（dry-run 输出的 confirm_reads 列出这些 GET）。'
             : '',
         entry.tool.name === 'appstore_respond_to_review' || entry.tool.name === 'appstore_delete_review_response'
-            ? '归属校验：Apple 的 customerReviews 不暴露所属 app，--yes 时要求 --app <app-id> 且 --confirm 与之相同。'
+            ? '归属校验：--yes 时分页读完 GET /apps/{confirm}/customerReviews，列表里必须有这条 reviewId。--confirm 与 --app 相同不算归属。'
             : '',
         entry.tool.name === 'appstore_update_phased_release' || entry.tool.name === 'appstore_delete_phased_release'
             ? '归属校验：--yes 时还要 --version-id <appStoreVersionId>（Apple 没有 GET phased release，只能从版本反查）。'

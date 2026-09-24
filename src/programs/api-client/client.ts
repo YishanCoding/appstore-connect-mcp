@@ -168,6 +168,10 @@ export class AppStoreConnectClient {
             assertApiHost(nextUrl);
         }
 
+        if (nextUrl && items.length < maxItems) {
+            throw new Error('分页在 1000 页后仍有下一页，结果不完整');
+        }
+
         return Number.isFinite(maxItems) ? items.slice(0, maxItems) : items;
     }
 

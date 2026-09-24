@@ -5,6 +5,12 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const assert = require('node:assert/strict');
 const HEAD = 'b7bbbaf3bd5f0880733c96cbce106f1c66c81088';
+function resolveHead() {
+  const index = process.argv.indexOf('--head');
+  if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1];
+  return HEAD;
+}
+const ACTIVE_HEAD = resolveHead();
 const BASE = '9a6c9e1fb3846855bd919116c01fb6abb4d0c240';
 const files = {
   safety: 'src/cli/safety.ts',
@@ -49,7 +55,7 @@ function extract(name, source, ts) {
       exports: ['decideSafety', 'bindConfirm', 'CANCEL_REVIEW_UNSUPPORTED'],
     },
     'write-functions': {
-      functions: ['defined', 'enc', 'patchBody', 'createBody', 'read', 'write', 'isNotFound', 'respondToReview', 'deleteReviewResponse', 'uploadScreenshots', 'createCpp', 'runBatch'],
+      functions: ['defined', 'enc', 'patchBody', 'createBody', 'read', 'write', 'plannedUploadStep', 'isNotFound', 'respondToReview', 'deleteReviewResponse', 'uploadScreenshots', 'createCpp', 'runBatch'],
       classes: ['PartialBatch'],
       exports: ['respondToReview', 'deleteReviewResponse', 'uploadScreenshots', 'createCpp', 'runBatch', 'PartialBatch'],
     },
@@ -72,7 +78,12 @@ function extract(name, source, ts) {
     assert.equal(matches.length, 1, `Expected one constant ${label}`);
     nodes.push(matches[0]);
   }
-  for (const label of selection.functions || []) nodes.push(findFunction(label));
+  const functionLabels = [...(selection.functions || [])];
+  if (name === 'write-functions' && ACTIVE_HEAD === HEAD) {
+    const extra = functionLabels.indexOf('plannedUploadStep');
+    if (extra >= 0) functionLabels.splice(extra, 1);
+  }
+  for (const label of functionLabels) nodes.push(findFunction(label));
   for (const label of selection.classes || []) {
     const matches = tree.statements.filter((node) => ts.isClassDeclaration(node) && node.name?.text === label);
     assert.equal(matches.length, 1, `Expected one class ${label}`);
@@ -91,10 +102,10 @@ function readSource(name, ts) {
     return fs.readFileSync(path.join(process.env.ASCLI_REVIEW_SNAPSHOT_DIR, name + '.ts'), 'utf8');
   }
   const repo = process.env.ASCLI_REVIEW_REPO || path.resolve(__dirname, '../../..');
-  const ref = name === 'main-client' ? BASE : HEAD;
+  const ref = name === 'main-client' ? BASE : ACTIVE_HEAD;
   const source = cp.execFileSync('git', ['-C', repo, 'show', `${ref}:${files[name]}`], {
     encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
   });
   return extract(name, source, ts);
 }
-module.exports = { HEAD, BASE, readSource, extract };
+module.exports = { HEAD, BASE, ACTIVE_HEAD, readSource, extract };

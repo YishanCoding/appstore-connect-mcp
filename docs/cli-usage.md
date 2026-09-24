@@ -52,8 +52,8 @@ ascli smoke --output /tmp/ascli-smoke.json
 - 写请求（含截图和 CPP 的提交 PATCH）只发一次，不再像早期实现那样对提交 PATCH 重试 3 次。这是 CLI 和 MCP 共用客户端之后的行为：写不重试。读请求对 429/5xx 最多重试 3 次；`Retry-After` 超过 60 秒直接报错，不继续等。axios 超时 60 秒。
 - 同一参数如果在 `--body`、flag、位置参数里给出不同的值，退出码 2。未知 flag（包括 `--yes=true`）退出码 2，不会静默丢掉。
 - `screenshot upload` 在删除线上截图之前检查每个本地文件存在且可读。`replaceExisting=true`（默认）是高风险。
-- `auth check` 遇到 HTTP 401 退出码 4。`analytics export` 的 `failed` 非空时退出码 3，并在 stdout 带上结果。
-- MCP 的批量 localization 会把单条失败收进结果对象并仍返回成功。CLI 遇到第一条失败就退出码 3。
+- 任何命令遇到 HTTP 401 都是退出码 4（凭据无效）。HTTP 403 仍是退出码 3。`analytics export` 的 `failed` 非空时退出码 3，并在 stdout 带上结果。
+- CLI 的 `version-localization batch-update` 和 `app-info-localization batch-update` 会逐条尝试全部更新，不会在第一条失败时停。stdout 列出每一条的成败；只要有失败就退出码 3。MCP 的批量 localization 仍把单条失败收进结果对象并返回成功。
 - 每次请求都会重新签 JWT，没有进程内缓存。
 - `store-credentials` 没有 CLI 命令。CLI 不保存凭据。
 - 2026-04 的 `CODEX_REVIEW.md` 里「version localization 写入 name/subtitle」和「reviews 把非 404 当成没有回复」这两条，当前代码已经分开资源、并且非 404 会抛出。文档留着，避免和旧审查结论对不上。

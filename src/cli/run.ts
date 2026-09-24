@@ -169,7 +169,7 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
             return finish(3, formatData(error.payload, 'json'), apiError(0, 'EXPORT_FAILED', `${failed} 项导出失败`));
         }
         if (error instanceof AuthMissing) return finish(4, '', authError(error.message));
-        if (error instanceof AscHttpError && error.status === 401 && toolName === 'appstore_validate_credentials') {
+        if (error instanceof AscHttpError && error.status === 401) {
             return finish(4, '', authError('凭据被 App Store Connect 拒绝（HTTP 401）'));
         }
         if (error instanceof AscHttpError) return finish(3, '', apiError(error.status, error.code, error.detail));
@@ -235,7 +235,7 @@ function dryRunOutput(
 function confirmNote(toolName: string): string {
     if (toolName === 'appstore_cancel_review') return '--yes 会直接拒绝：Apple 规范里没有 appStoreReviewRequests，无法确认归属';
     if (toolName === 'appstore_respond_to_review' || toolName === 'appstore_delete_review_response') {
-        return '--yes 时 --confirm 必须等于 --app（customerReviews 不暴露所属 app，不发归属 GET）';
+        return '--yes 时分页读完 GET /apps/{confirm}/customerReviews（limit 200），列表里必须有这条 reviewId。--confirm 与 --app 字面相等不算归属。';
     }
     if (toolName === 'appstore_invite_user') return '--yes 时 --confirm 必须等于 email（不区分大小写），不发归属 GET';
     return '--yes 时先按 confirm_reads 发只读 GET 确认归属，通过后才发 steps 里的写请求';

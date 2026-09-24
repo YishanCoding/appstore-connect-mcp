@@ -45,7 +45,8 @@ export function errorFromResponse(result: HttpResult): AscHttpError {
     const first = errors[0];
     const status = Number(first?.status ?? result.status) || result.status;
     const code = first?.code || 'UNKNOWN';
-    const detail = formatApiErrors(errors) || `HTTP ${result.status}`;
+    const formatted = formatApiErrors(errors);
+    const detail = formatted || `Request failed with status code ${result.status}`;
     return new AscHttpError(status, code, detail);
 }
 
@@ -101,9 +102,9 @@ export async function sendWithPolicy(
         try {
             result = await send(call);
         } catch (error) {
-            if (call.method !== 'GET' || attempt >= maxRetries) throw error;
-            await sleep(retryDelayMs({}, attempt));
-            continue;
+            // Network failures (ENOTFOUND and the like) are not retried. origin/main
+            // only surfaced the axios error once; HTTP 429/5xx still retry below.
+            throw error;
         }
 
         if (result.status < 400) return result;

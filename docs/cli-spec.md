@@ -66,7 +66,7 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
    | screenshot-set delete | `GET /appScreenshotSets/{id}?include=appStoreVersionLocalization,appCustomProductPageLocalization`；版本截图集走上面的版本链，CPP 截图集走 `appCustomProductPageLocalizations?include=appCustomProductPageVersion` → `appCustomProductPageVersions?include=appCustomProductPage` → `appCustomProductPages?include=app`。两者都没有（例如产品页优化实验的截图集）就拒绝 |
    | cpp delete | `GET /appCustomProductPages/{id}?include=app` |
    | event delete / submit | `appEvents` 没有 app 关系。读完 `GET /apps/{confirm}/appEvents?filter[id]=<eventId>`（跟随 links.next），结果里必须有这个 eventId。线上实测 Apple 会忽略这里的 `filter[id]`，所以"结果非空"不能当作归属证据 |
-   | review reply / delete-response | 降级：`--confirm` 必须等于 `--app`，不发归属 GET。原因：`customerReviews/{id}?include=app` 线上 400（没有 app 关系），`/apps/{id}/customerReviews` 也不支持 `filter[id]`（400），没有只读方式能从评论 id 反查 app。回复只作用于这一条 review id，且可以用 delete-response 撤回，风险可接受 |
+   | review reply / delete-response | `GET /apps/{confirm}/customerReviews?limit=200` 并跟随 `links.next` 读完。列表里必须有这条 reviewId 才放行。读失败、读到 1000 页仍有下一页、或找不到，一律拒绝，不发写请求。`--confirm` 与 `--app` 字面相等不算归属。`include=app` 和 `filter[id]` 线上都是 400，所以不能反查，只能从确认的 app 正向列评论 |
    | version cancel | 一律拒绝。它发的 `DELETE /appStoreReviewRequests/{id}` 在 Apple 规范里不存在（线上 GET 该路径 404），没有可以绑定的资源。这是 MCP 原有问题，本 PR 不改 MCP |
 
    dry-run 输出里 `steps` 只列写请求本身会发的请求；`--yes` 执行前额外发的归属 GET 列在 `confirm_reads`（依赖上一步结果的 id 用 `{占位符}`），说明写在 `confirm_note`。
@@ -77,7 +77,7 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
 - 成功：stdout 输出 JSON（或所选格式），退出码 0。
 - 参数错误：stderr 输出 `{"error":{"type":"usage","message":...}}`，退出码 2。
 - API 错误：stderr 输出 `{"error":{"type":"api","status":<http>,"code":...,"detail":...}}`，退出码 3。**不能吞错误**。
-- 认证缺失：退出码 4，提示缺哪个环境变量。
+- 认证缺失或 Apple 返回 HTTP 401：退出码 4。HTTP 403 仍是 API 错误，退出码 3。
 
 ### 凭据
 
@@ -94,10 +94,10 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
 | 编号 | 偏离 | 影响 MCP 的场景 | 为什么保留 |
 |---|---|---|---|
 | F-05 | 读请求 `Retry-After` 超过 60 秒直接报错；axios 超时 60 秒 | 服务端要求等待超过 60 秒，或请求挂住超过 60 秒 | 原来 `Retry-After: 86400` 会让进程睡 24 小时 |
-| F-06 | 错误文本由共享的 `errorFromResponse` 生成，格式与 origin/main 相同（多条 errors 用 `, ` 拼接） | 无文本变化；只是生成位置从 axios 拦截器移到了共享策略层 | 保证 MCP 错误文本与 origin/main 一致 |
-| R2-F08 | `upload_screenshots` / `create_cpp` 在删除或上传前检查本地文件：必须存在、可读、是普通文件且大小 > 0 | 传了不存在的路径、目录或空文件：MCP 现在直接报错，不再先删掉线上截图再失败 | 原来会先删线上截图集，再在读文件时报 EISDIR/ENOENT，造成数据丢失 |
+| F-06 | 错误文本由共享的 `errorFromResponse` 生成。有 errors[] 时用 `, ` 拼接；没有 errors[] 时用 axios 原文 `Request failed with status code N`。GET 只对 HTTP 429/5xx 重试，ENOTFOUND 这类网络异常不重试 | 空错误信封和网络异常与 origin/main 一致 | 第四轮把这两处改回 main 的行为 |
+| R2-F08 | `upload_screenshots` 在删除或上传前检查本地文件：必须存在、可读、是普通文件且大小 > 0。CLI 的 `cpp create` 也会先检查文件。MCP 的 `create_cpp` 没有这个预检 | 截图上传传了不存在的路径、目录或空文件时，MCP 直接报错，不再先删线上截图。MCP `create_cpp` 缺文件时仍会先 POST 创建 CPP 和截图集，读文件失败才停，和 origin/main 一样 | 截图上传原来会先删线上截图再失败。不把 MCP `create_cpp` 说成已经做了预检 |
 | 3e6b711 / d9d6479 | 截图和 CPP 截图的提交 PATCH 只发一次，不再失败后隔 3 秒重试 3 次；所有写请求都不重试 | 提交 PATCH 偶发失败时 MCP 直接报错 | 写请求重试可能重复提交；与 CLI "写不重试" 一致 |
-| 共享客户端 | 读请求遇到 429/5xx 最多重试 3 次，按 `Retry-After` 或指数退避等待（origin/main 不重试） | 限流或服务端 5xx 时 MCP 的读请求会多等几次再报错 | CLI 与 MCP 共用 `sendWithPolicy` |
+| 共享客户端 | 读请求遇到 HTTP 429/5xx 最多重试 3 次，按 `Retry-After` 或指数退避等待（origin/main 不重试）。网络异常（例如 ENOTFOUND）不重试 | 限流或服务端 5xx 时 MCP 的读请求会多等几次再报错。连不上主机时只试一次 | CLI 与 MCP 共用 `sendWithPolicy`。网络异常与 main 一样不重试 |
 | 共享客户端 | 抛出的错误类型从 `Error` 变成 `AscHttpError`（message 文本不变，见 F-06）；review 相关的 404 判断同时认两种错误 | 只有按错误类型判断的调用方可见；MCP 返回给模型的文本不变 | 统一退出码映射 |
 | 列表分页 | 各 list 方法把单页 `limit` 限制在 200 以内、结果再截到上限；`review list` 首页请求的 `limit` 参数由 100 变 200（返回条数上限仍是 100） | MCP 传入 `limit > 200` 时不再被 Apple 400 拒绝，而是按 200 一页取；请求参数与 origin/main 略有不同 | Apple 单页上限 200 |
 | R3 | `getAllPages` 只跟随 host 为 `api.appstoreconnect.apple.com` 的 `links.next`，其他 host 直接报错 | 服务端返回别的域名的翻页链接（正常不会发生） | 防止把 JWT 发到别的域名 |

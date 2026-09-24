@@ -12,15 +12,19 @@ import { CliUsage } from './output.js';
 import type { HttpMethod } from './meta.js';
 
 export interface Step {
-    method: HttpMethod;
+    method: HttpMethod | 'PUT';
     path: string;
     body: unknown;
     params?: Record<string, unknown>;
+    /** Present on upload steps whose URL and byte range come from the reserve response. */
+    note?: string;
+    offset?: string;
+    length?: string;
 }
 
 export interface WritePreview {
     dry_run: true;
-    method: HttpMethod | null;
+    method: HttpMethod | 'PUT' | null;
     path: string | null;
     body: unknown;
     steps: Step[];
@@ -91,6 +95,18 @@ async function write(ctx: Ctx, method: Exclude<HttpMethod, 'GET'>, path: string,
     if (method === 'PATCH') return ctx.client.patch(path, body);
     await ctx.client.delete(path, body ?? undefined);
     return undefined;
+}
+
+/** One conditional PUT per reserved file. The real URL, part count, and byte range come from uploadOperations. */
+function plannedUploadStep(): Step {
+    return {
+        method: 'PUT',
+        path: '{uploadOperations[i].url}',
+        body: null,
+        note: '由 reserve 响应决定；i 从 0 到 uploadOperations.length - 1',
+        offset: '{uploadOperations[i].offset}',
+        length: '{uploadOperations[i].length}',
+    };
 }
 
 function isNotFound(error: unknown): boolean {
@@ -383,10 +399,12 @@ async function uploadScreenshots(ctx: Ctx, args: Record<string, any>) {
         if (ctx.execute && ctx.client) {
             const realId = await uploadScreenshot(ctx.client, setId, imagePath);
             ctx.steps.push({ method: 'POST', path: '/appScreenshots', body: reserveScreenshotBody(setId, imagePath) });
+            ctx.steps.push(plannedUploadStep());
             ctx.steps.push({ method: 'PATCH', path: `/appScreenshots/${realId}`, body: commitScreenshotBody(realId, imagePath) });
             screenshotIds.push(realId);
         } else {
             ctx.steps.push({ method: 'POST', path: '/appScreenshots', body: reserveScreenshotBody(setId, imagePath) });
+            ctx.steps.push(plannedUploadStep());
             ctx.steps.push({ method: 'PATCH', path: '/appScreenshots/{reservedId}', body: commitScreenshotBody('{reservedId}', imagePath) });
             screenshotIds.push('{reservedId}');
         }
@@ -444,6 +462,7 @@ async function createCpp(ctx: Ctx, args: Record<string, any>) {
         ctx.steps.push({ method: 'POST', path: '/appScreenshotSets', body: setBody });
         for (const file of files) {
             ctx.steps.push({ method: 'POST', path: '/appScreenshots', body: reserveScreenshotBody('{screenshotSetId}', file) });
+            ctx.steps.push(plannedUploadStep());
             ctx.steps.push({ method: 'PATCH', path: '/appScreenshots/{reservedId}', body: commitScreenshotBody('{reservedId}', file) });
         }
         return { dry_run: true };

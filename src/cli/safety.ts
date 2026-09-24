@@ -86,7 +86,16 @@ function relId(payload: unknown, key: string): string | undefined {
  * Ids that come from an earlier response are shown as {placeholders}.
  */
 export function bindingReads(toolName: string, args: Record<string, unknown>, ctx: BindContext = {}): BindRead[] {
-    if (toolName === 'appstore_invite_user' || REVIEW_TOOLS.has(toolName) || toolName === 'appstore_cancel_review') return [];
+    if (toolName === 'appstore_invite_user' || toolName === 'appstore_cancel_review') return [];
+    if (REVIEW_TOOLS.has(toolName)) {
+        const app = ctx.confirm ? id(ctx.confirm) : '{--confirm}';
+        return [{
+            method: 'GET',
+            path: `/apps/${app}/customerReviews`,
+            params: { limit: 200 },
+            note: '分页读完（跟随 links.next）。列表里必须有 reviewId。--confirm 与 --app 字面相等不算归属。',
+        }];
+    }
     if (USER_ID_TOOLS.has(toolName)) {
         return [{ method: 'GET', path: `/users/${id(args.userId)}`, note: '仅当 --confirm 不等于 userId 时发送' }];
     }
@@ -146,7 +155,7 @@ function sameText(left: unknown, right: string): boolean {
  * cannot prove is rejected. Only relationships Apple's OpenAPI lists for each GET are used.
  *
  * - review reply / delete-response: customerReviews has no app relationship (include=app → 400)
- *   and /apps/{id}/customerReviews has no filter[id] (400). --confirm must equal --app.
+ *   and filter[id] is rejected. Page through GET /apps/{confirm}/customerReviews and require the review id.
  * - version submit / release / phased-release create: GET appStoreVersions/{v}?include=app.
  * - phased-release update / delete: no GET on appStoreVersionPhasedReleases. Needs --version-id;
  *   GET appStoreVersions/{v}?include=app,appStoreVersionPhasedRelease, both ids must match.
@@ -180,10 +189,18 @@ export async function bindConfirm(
     }
 
     if (REVIEW_TOOLS.has(toolName)) {
-        if (!ctx.app) {
-            return deny('review 回复类命令需要同时传 --app <app-id> 和相同的 --confirm（Apple 的 customerReviews 不暴露所属 app，无法按资源校验）');
+        const reviewId = String(args.reviewId ?? '');
+        if (!reviewId) return deny('review 回复类命令缺少 reviewId，已拒绝写入');
+        let reviews: unknown[];
+        try {
+            reviews = await reader.getAll(`/apps/${id(confirm)}/customerReviews`, { limit: 200 });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.includes('不完整')) throw error;
+            return deny(`无法读完 app ${confirm} 的评论列表（${message}），已拒绝写入`);
         }
-        if (confirm !== ctx.app) return deny('--confirm 必须等于 --app');
+        const owned = reviews.some((item) => (item as { id?: unknown } | null)?.id === reviewId);
+        if (!owned) return deny(`评论 ${reviewId} 不在 app ${confirm} 的评论列表里，已拒绝写入`);
         return { ok: true };
     }
 
@@ -254,7 +271,14 @@ export async function bindConfirm(
 
     if (EVENT_TOOLS.has(toolName)) {
         const eventId = String(args.eventId ?? '');
-        const events = await reader.getAll(`/apps/${id(confirm)}/appEvents`, { 'filter[id]': eventId });
+        let events: unknown[];
+        try {
+            events = await reader.getAll(`/apps/${id(confirm)}/appEvents`, { 'filter[id]': eventId });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.includes('不完整')) throw error;
+            return deny(`无法读完 app ${confirm} 的事件列表（${message}），已拒绝写入`);
+        }
         const owned = events.some((item) => (item as { id?: unknown } | null)?.id === eventId);
         if (!owned) return deny(`事件 ${eventId} 不在 app ${confirm} 的事件列表里，已拒绝写入`);
         return { ok: true };
