@@ -191,7 +191,6 @@ export class CppManager {
             });
         }
 
-        // Step 3: Commit with checksum (retry up to 3×)
         const commitBody = {
             data: {
                 type: 'appScreenshots',
@@ -199,15 +198,7 @@ export class CppManager {
                 attributes: { uploaded: true, sourceFileChecksum: checksum },
             },
         };
-        for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-                await this.client.patch(`/appScreenshots/${shotId}`, commitBody);
-                break;
-            } catch (e) {
-                if (attempt === 2) throw e;
-                await new Promise((r) => setTimeout(r, 3000));
-            }
-        }
+        await this.client.patch(`/appScreenshots/${shotId}`, commitBody);
 
         return shotId;
     }

@@ -427,4 +427,56 @@ describe('screenshot commit', () => {
         await expect(uploadScreenshot(client, 'set-1', file)).rejects.toBeInstanceOf(AscHttpError);
         expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(1);
     });
+
+    test('cpp create sends the commit PATCH once', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'ascli-cpp-'));
+        const hero = join(dir, 'hero.png');
+        const extra = join(dir, 'extra.png');
+        writeFileSync(hero, 'hero');
+        writeFileSync(extra, 'extra');
+        const calls: HttpCall[] = [];
+        const result = await runCli(
+            [
+                'cpp', 'create',
+                '--app', 'app-1',
+                '--name', 'Hero',
+                '--promotional-text', 'hello',
+                '--cpp-image-path', hero,
+                '--template-shot-paths', JSON.stringify([extra]),
+                '--yes',
+            ],
+            {
+                env,
+                transport: {
+                    async send(call) {
+                        calls.push(call);
+                        if (call.method === 'PATCH') {
+                            return { status: 500, headers: {}, data: { errors: [{ status: '500', code: 'SERVER', title: 'commit failed' }] } };
+                        }
+                        if (String(call.url).includes('appCustomProductPages')) {
+                            return {
+                                status: 201,
+                                headers: {},
+                                data: {
+                                    data: { id: 'cpp-1' },
+                                    included: [{ type: 'appCustomProductPageLocalizations', id: 'loc-1' }],
+                                },
+                            };
+                        }
+                        if (String(call.url).includes('appScreenshotSets')) {
+                            return { status: 201, headers: {}, data: { data: { id: 'set-1' } } };
+                        }
+                        return {
+                            status: 201,
+                            headers: {},
+                            data: { data: { id: 'shot-1', attributes: { uploadOperations: [] } } },
+                        };
+                    },
+                },
+            }
+        );
+        expect(result.code).toBe(3);
+        expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(1);
+        expect(json(result.stderr).error.type).toBe('api');
+    });
 });
