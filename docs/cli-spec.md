@@ -55,7 +55,21 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
 
 1. 所有写命令（§5 写清单）默认 dry-run：打印将要发的 method、path、body 到 stdout，`"dry_run": true`，**不发任何网络写请求**，退出码 0。
 2. 带 `--yes` 才执行。写请求永不自动重试；读请求 429/5xx 退避重试（统一约定 §4）。
-3. 以下高风险命令除了 `--yes` 还必须带 `--confirm`，否则拒绝（退出码 2），并且不发写请求。app 作用域命令的 `--confirm <app-id>` 不和 `--app` 比字符串：写入前先 `GET` 目标资源（`include=app`），用返回的 `app.id` 比对，不一致就拒绝。包括 `submit-for-review`、`cancel-review`、`release-version`、`create/update/delete-phased-release`、`respond-to-review`、`delete-review-response`、`delete-cpp`、`delete-screenshot-set`、`submit-event`、`delete-event`。`upload-screenshots` 在 `replaceExisting=true`（默认）时同样按高风险处理。`invite-user`、`remove-user`、`update-user-roles` 的 `--confirm` 是 `<userId 或 email>`，必须等于目标，不能用任意 app id 代替。
+3. 以下高风险命令除了 `--yes` 还必须带 `--confirm`，否则拒绝（退出码 2），并且不发写请求。包括 `submit-for-review`、`cancel-review`、`release-version`、`create/update/delete-phased-release`、`respond-to-review`、`delete-review-response`、`delete-cpp`、`delete-screenshot-set`、`submit-event`、`delete-event`。`upload-screenshots` 在 `replaceExisting=true`（默认）时同样按高风险处理。`invite-user`、`remove-user`、`update-user-roles` 的 `--confirm` 是 `<userId 或 email>`，必须等于目标（email/username 不区分大小写，userId 精确比对），不能用任意 app id 代替。
+   app 作用域命令的 `--confirm <app-id>` 按 Apple OpenAPI（4.5）里真实存在的关系链只读 GET 目标资源确认所属 app，查不到或不一致一律拒绝（fail-closed）。线上实测过的链路：
+
+   | 命令 | 归属校验 |
+   |---|---|
+   | version submit / release、phased-release create | `GET /appStoreVersions/{v}?include=app` |
+   | phased-release update / delete | 必须带 `--version-id <appStoreVersionId>`（CLI 专用 flag，不进 MCP schema）。Apple 没有 `GET /appStoreVersionPhasedReleases/{id}`，只能 `GET /appStoreVersions/{v}?include=app,appStoreVersionPhasedRelease`，app 等于 `--confirm` 且版本的 phased release id 等于要改的 id 才放行 |
+   | screenshot upload（replaceExisting） | `GET /appStoreVersionLocalizations/{id}?include=appStoreVersion` → `GET /appStoreVersions/{v}?include=app` |
+   | screenshot-set delete | `GET /appScreenshotSets/{id}?include=appStoreVersionLocalization,appCustomProductPageLocalization`；版本截图集走上面的版本链，CPP 截图集走 `appCustomProductPageLocalizations?include=appCustomProductPageVersion` → `appCustomProductPageVersions?include=appCustomProductPage` → `appCustomProductPages?include=app`。两者都没有（例如产品页优化实验的截图集）就拒绝 |
+   | cpp delete | `GET /appCustomProductPages/{id}?include=app` |
+   | event delete / submit | `appEvents` 没有 app 关系。读完 `GET /apps/{confirm}/appEvents?filter[id]=<eventId>`（跟随 links.next），结果里必须有这个 eventId。线上实测 Apple 会忽略这里的 `filter[id]`，所以"结果非空"不能当作归属证据 |
+   | review reply / delete-response | 降级：`--confirm` 必须等于 `--app`，不发归属 GET。原因：`customerReviews/{id}?include=app` 线上 400（没有 app 关系），`/apps/{id}/customerReviews` 也不支持 `filter[id]`（400），没有只读方式能从评论 id 反查 app。回复只作用于这一条 review id，且可以用 delete-response 撤回，风险可接受 |
+   | version cancel | 一律拒绝。它发的 `DELETE /appStoreReviewRequests/{id}` 在 Apple 规范里不存在（线上 GET 该路径 404），没有可以绑定的资源。这是 MCP 原有问题，本 PR 不改 MCP |
+
+   dry-run 输出里 `steps` 只列写请求本身会发的请求；`--yes` 执行前额外发的归属 GET 列在 `confirm_reads`（依赖上一步结果的 id 用 `{占位符}`），说明写在 `confirm_note`。
 4. `store-credentials` 不做成 CLI 命令（CLI 是无状态的，凭据只从环境变量读），`ascli tools --json` 里把它标成 `"command": null, "reason": "stateless"`。
 
 ### 输出与退出码
@@ -72,6 +86,19 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
 ### 不由 CLI 覆盖的能力（写进 `tools --json`，`command: null`）
 
 能力盘点（2026-09-23）没发现 ASC 侧"只能走浏览器"的功能；Apple Ads 的展示份额、变更历史走浏览器，属于 ASA 侧，不在本 CLI 范围。实现中如果发现某个 ASC 功能 API 做不到，按统一约定 §6 登记，不要去写浏览器自动化。
+
+### 对 MCP 行为的有意偏离
+
+原则是 MCP 的 tools/list 和正常路径返回不变。下面几处是 CLI 与 MCP 共用底层代码后，MCP 也跟着变了的地方，都是有意保留：
+
+| 编号 | 偏离 | 影响 MCP 的场景 | 为什么保留 |
+|---|---|---|---|
+| F-05 | 读请求 `Retry-After` 超过 60 秒直接报错；axios 超时 60 秒 | 服务端要求等待超过 60 秒，或请求挂住超过 60 秒 | 原来 `Retry-After: 86400` 会让进程睡 24 小时 |
+| F-06 | 错误文本由共享的 `errorFromResponse` 生成，格式与 origin/main 相同（多条 errors 用 `, ` 拼接） | 无文本变化；只是生成位置从 axios 拦截器移到了共享策略层 | 保证 MCP 错误文本与 origin/main 一致 |
+| R2-F08 | `upload_screenshots` / `create_cpp` 在删除或上传前检查本地文件：必须存在、可读、是普通文件且大小 > 0 | 传了不存在的路径、目录或空文件：MCP 现在直接报错，不再先删掉线上截图再失败 | 原来会先删线上截图集，再在读文件时报 EISDIR/ENOENT，造成数据丢失 |
+| R3 | `getAllPages` 只跟随 host 为 `api.appstoreconnect.apple.com` 的 `links.next`，其他 host 直接报错 | 服务端返回别的域名的翻页链接（正常不会发生） | 防止把 JWT 发到别的域名 |
+
+以下是 MCP 原有、本 PR 没有改的问题（端点不在 Apple OpenAPI 4.5 里）：`version submit` 的 `POST /appStoreReviewRequests`、`version cancel` 的 `DELETE /appStoreReviewRequests/{id}`（Apple 现在的提交/取消走 `reviewSubmissions`）、`event submit` 的 `POST /appEventSubmissions`、`review reply` 在已有回复时发的 `PATCH /customerReviewResponses/{id}`（规范里只有 GET/DELETE）。
 
 ## 4. 实现要求
 

@@ -5,10 +5,11 @@ import { describe, expect, test } from 'bun:test';
 import { AppStoreConnectClient } from '../programs/api-client/client.js';
 import { AscHttpError, errorFromResponse, sendWithPolicy, type HttpCall, type HttpResult } from '../programs/api-client/policy.js';
 import { ReviewManager } from '../programs/reviews/review-manager.js';
-import { uploadScreenshot } from '../mcp/tools/versions/screenshots.js';
+import { assertReadableFiles, uploadScreenshot } from '../mcp/tools/versions/screenshots.js';
 import { projectFields } from './output.js';
 import { runCli } from './run.js';
 import { decideSafety } from './safety.js';
+import { appleTransport } from './test-support/apple-spec-mock.js';
 
 const env = {
     APP_STORE_CONNECT_KEY_ID: 'TESTKEYID',
@@ -132,24 +133,12 @@ describe('ascli', () => {
         };
         const mismatch = await runCli(
             ['review', 'reply', 'rev-1', '--response-body', 'hello', '--yes', '--confirm', 'app-a', '--app', 'app-b'],
-            {
-                env,
-                transport: {
-                    async send(call) {
-                        calls.push(call);
-                        return {
-                            status: 200,
-                            headers: {},
-                            data: { data: { relationships: { app: { data: { id: 'APP_B' } } } } },
-                        };
-                    },
-                },
-            }
+            { env, transport }
         );
         expect(mismatch.code).toBe(2);
         expect(json(mismatch.stderr).error.type).toBe('usage');
-        expect(json(mismatch.stderr).error.message).toContain('APP_B');
-        expect(calls.map((call) => call.method)).toEqual(['GET']);
+        expect(json(mismatch.stderr).error.message).toContain('--app');
+        expect(calls).toEqual([]);
 
         const missing = await runCli(['review', 'reply', 'rev-1', '--response-body', 'hello', '--yes', '--app', 'app-a'], {
             env,
@@ -157,7 +146,14 @@ describe('ascli', () => {
         });
         expect(missing.code).toBe(2);
         expect(json(missing.stderr).error.type).toBe('usage');
-        expect(calls.filter((call) => call.method !== 'GET')).toEqual([]);
+
+        const noApp = await runCli(['review', 'reply', 'rev-1', '--response-body', 'hello', '--yes', '--confirm', 'app-a'], {
+            env,
+            transport,
+        });
+        expect(noApp.code).toBe(2);
+        expect(json(noApp.stderr).error.message).toContain('--app');
+        expect(calls).toEqual([]);
         expect(decideSafety({ kind: 'write', risk: 'high', yes: true }).action).toBe('reject');
         expect(decideSafety({ kind: 'write', risk: 'high', yes: true, confirm: 'app-a' }).action).toBe('run');
     });
@@ -263,7 +259,7 @@ describe('http policy', () => {
                             return {
                                 status: 200,
                                 headers: {},
-                                data: { data: [{ id: 'a' }, { id: 'b' }], links: { next: 'https://example.test/reviews?page=2' } },
+                                data: { data: [{ id: 'a' }, { id: 'b' }], links: { next: 'https://api.appstoreconnect.apple.com/v1/reviews?page=2' } },
                             };
                         }
                         return { status: 200, headers: {}, data: { data: [{ id: 'c' }] } };
@@ -285,7 +281,7 @@ describe('http policy', () => {
                         return {
                             status: 200,
                             headers: {},
-                            data: { data: [{ id: 'only' }], links: { next: 'https://example.test/more' } },
+                            data: { data: [{ id: 'only' }], links: { next: 'https://api.appstoreconnect.apple.com/v1/more' } },
                         };
                     },
                 },
@@ -368,7 +364,7 @@ describe('--all ignores schema default limits', () => {
                                     state: 'ACTIVE',
                                 },
                             })),
-                            links: { next: 'https://example.test/next' },
+                            links: { next: 'https://api.appstoreconnect.apple.com/v1/next' },
                         },
                     };
                 }
@@ -637,18 +633,10 @@ describe('round 2 write safety', () => {
         expect(deletion.path).toBe('/customerReviewResponses/resp-9');
 
         calls.length = 0;
-        const live = await runCli(['review', 'delete-response', 'rev-1', '--yes', '--confirm', 'APP'], { env, transport: {
-            async send(call) {
-                calls.push(call);
-                if (String(call.url).includes('/response') || call.params?.include === 'app') {
-                    if (call.params?.include === 'app') {
-                        return { status: 200, headers: {}, data: { data: { relationships: { app: { data: { id: 'APP' } } } } } };
-                    }
-                    return { status: 200, headers: {}, data: { data: { id: 'resp-9' } } };
-                }
-                return { status: 204, headers: {}, data: {} };
-            },
-        } });
+        const live = await runCli(['review', 'delete-response', 'rev-1', '--yes', '--app', 'APP', '--confirm', 'APP'], {
+            env,
+            transport: appleTransport({ reviews: { 'rev-1': { response: 'resp-9' } } }, calls),
+        });
         expect(live.code).toBe(0);
         const sent = calls.find((call) => call.method === 'DELETE');
         expect(sent?.url).toBe(deletion.path);
@@ -671,28 +659,11 @@ describe('round 2 write safety', () => {
         const file = join(dir, 'shot.png');
         writeFileSync(file, 'png-bytes');
         const calls: HttpCall[] = [];
-        const transport = {
-            async send(call: HttpCall): Promise<HttpResult> {
-                calls.push(call);
-                if (call.params?.include === 'app' && !String(call.url).includes('appScreenshotSets')) {
-                    return { status: 200, headers: {}, data: { data: { relationships: { app: { data: { id: 'APP' } } } } } };
-                }
-                if (call.method === 'GET') {
-                    return {
-                        status: 200,
-                        headers: {},
-                        data: { data: [{ id: 'set-old', relationships: { appScreenshots: { data: [{ id: 'shot1' }] } } }] },
-                    };
-                }
-                if (call.method === 'POST' && call.url === '/appScreenshotSets') {
-                    return { status: 201, headers: {}, data: { data: { id: 'set-new' } } };
-                }
-                if (call.method === 'POST') {
-                    return { status: 201, headers: {}, data: { data: { id: 'shot-new', attributes: { uploadOperations: [] } } } };
-                }
-                return { status: 200, headers: {}, data: {} };
-            },
-        };
+        const transport = appleTransport({
+            versions: { V1: { app: 'APP' } },
+            versionLocalizations: { LOC: { version: 'V1' } },
+            screenshotSets: { 'set-old': { versionLocalization: 'LOC', screenshots: ['shot1'] } },
+        }, calls);
         const dry = await runCli([
             'screenshot', 'upload',
             '--app-store-version-localization-id', 'LOC',
@@ -724,6 +695,10 @@ describe('round 2 write safety', () => {
             '--yes', '--confirm', 'APP',
         ], { env, transport });
         expect(live.code).toBe(0);
+        expect(calls.slice(0, 2).map((call) => `${call.method} ${call.url} ${JSON.stringify(call.params)}`)).toEqual([
+            'GET /appStoreVersionLocalizations/LOC {"include":"appStoreVersion"}',
+            'GET /appStoreVersions/V1 {"include":"app"}',
+        ]);
         const methods = calls.map((call) => call.method);
         expect(methods.indexOf('DELETE')).toBeGreaterThan(methods.indexOf('GET'));
         const setPost = calls.find((call) => call.method === 'POST' && call.url === '/appScreenshotSets');
@@ -816,7 +791,7 @@ describe('round 2 write safety', () => {
                             headers: {},
                             data: {
                                 data: Array.from({ length: 200 }, (_, index) => reviewRow(`r-${index}`)),
-                                links: { next: 'https://example.test/reviews?page=2' },
+                                links: { next: 'https://api.appstoreconnect.apple.com/v1/reviews?page=2' },
                             },
                         };
                     }
@@ -848,7 +823,7 @@ describe('round 2 write safety', () => {
                                 headers: {},
                                 data: {
                                     data: [{ id: 'first', attributes: { locale: 'en-US', name: 'n', shortDescription: 's', longDescription: 'l' } }],
-                                    links: { next: 'https://example.test/next' },
+                                    links: { next: 'https://api.appstoreconnect.apple.com/v1/next' },
                                 },
                             };
                         }
@@ -893,5 +868,238 @@ describe('round 2 write safety', () => {
         expect(body.results[0].id).toBe('L1');
         expect(body.results[1].success).toBe(false);
         expect(n).toBe(2);
+    });
+});
+
+describe('round 3 ownership binding follows Apple relationship chains', () => {
+    const world = () => ({
+        apps: { APP: { events: ['E1'] }, OTHER: { events: ['E9'] }, EMPTY: { events: [] } },
+        versions: {
+            V1: { app: 'APP', phasedRelease: 'PR1' },
+            V2: { app: 'OTHER', phasedRelease: 'PR2' },
+            V3: { app: 'APP' },
+        },
+        versionLocalizations: { LOC: { version: 'V1' }, LOC_OTHER: { version: 'V2' } },
+        screenshotSets: {
+            SET_V: { versionLocalization: 'LOC', screenshots: ['S1'] },
+            SET_C: { cppLocalization: 'CLOC', screenshots: ['S2'] },
+            SET_X: { screenshots: [] },
+        },
+        cppLocalizations: { CLOC: { cppVersion: 'CV1' } },
+        cppVersions: { CV1: { cpp: 'CPP1' } },
+        cpps: { CPP1: { app: 'APP' }, CPP2: { app: 'OTHER' } },
+        reviews: { R1: { response: 'RESP1' }, R2: {} },
+        users: { U1: { username: 'Real@Example.com', email: 'Real@Example.com' } },
+    });
+    const run = async (argv: string[]) => {
+        const calls: HttpCall[] = [];
+        const result = await runCli(argv, { env, transport: appleTransport(world(), calls), sleep: async () => {} });
+        return { ...result, calls, writes: calls.filter((call) => call.method !== 'GET') };
+    };
+    const firstGets = (calls: HttpCall[]) =>
+        calls.filter((call) => call.method === 'GET').map((call) => `${call.url} ${JSON.stringify(call.params ?? {})}`);
+
+    test('the mock enforces Apple spec: invalid include 400, missing path 404, no GET on phased releases', async () => {
+        const t = appleTransport(world());
+        const get = (url: string, params?: Record<string, unknown>) => t.send({ method: 'GET', url, params });
+        expect((await get('/customerReviews/R1', { include: 'app' })).status).toBe(400);
+        expect((await get('/appStoreVersionLocalizations/LOC', { include: 'app' })).status).toBe(400);
+        expect((await get('/appScreenshotSets/SET_V', { include: 'app' })).status).toBe(400);
+        expect((await get('/appEvents/E1', { include: 'app' })).status).toBe(400);
+        expect((await get('/apps/APP/customerReviews', { 'filter[id]': 'R1' })).status).toBe(400);
+        expect((await get('/appStoreReviewRequests/RR1')).status).toBe(404);
+        expect((await get('/appStoreVersionPhasedReleases/PR1')).status).toBe(405);
+        expect((await get('/appStoreVersions/V1', { include: 'app,appStoreVersionPhasedRelease' })).status).toBe(200);
+    });
+
+    test('version-scoped commands bind through appStoreVersions?include=app', async () => {
+        for (const argv of [['version', 'release', 'V1'], ['version', 'submit', 'V1'], ['phased-release', 'create', 'V1']]) {
+            const wrong = await run([...argv, '--yes', '--confirm', 'OTHER']);
+            expect(wrong.code).toBe(2);
+            expect(wrong.writes).toEqual([]);
+            expect(firstGets(wrong.calls)).toEqual(['/appStoreVersions/V1 {"include":"app"}']);
+            const ok = await run([...argv, '--yes', '--confirm', 'APP']);
+            expect(ok.writes.length).toBe(1);
+        }
+    });
+
+    test('phased-release update/delete need --version-id and the phased release must belong to it', async () => {
+        for (const argv of [['phased-release', 'update', 'PR1', '--phased-release-state', 'PAUSED'], ['phased-release', 'delete', 'PR1']]) {
+            const dry = await run(argv);
+            expect(dry.code).toBe(0);
+            expect(json(dry.stdout).confirm_reads[0].path).toBe('/appStoreVersions/{--version-id}');
+
+            const noVersion = await run([...argv, '--yes', '--confirm', 'APP']);
+            expect(noVersion.code).toBe(2);
+            expect(json(noVersion.stderr).error.message).toContain('--version-id');
+            expect(noVersion.calls).toEqual([]);
+
+            const otherVersion = await run([...argv, '--version-id', 'V3', '--yes', '--confirm', 'APP']);
+            expect(otherVersion.code).toBe(2);
+            expect(otherVersion.writes).toEqual([]);
+
+            const otherApp = await run([...argv, '--version-id', 'V2', '--yes', '--confirm', 'APP']);
+            expect(otherApp.code).toBe(2);
+            expect(otherApp.writes).toEqual([]);
+
+            const ok = await run([...argv, '--version-id', 'V1', '--yes', '--confirm', 'APP']);
+            expect(ok.code).toBe(0);
+            expect(firstGets(ok.calls)).toEqual(['/appStoreVersions/V1 {"include":"app,appStoreVersionPhasedRelease"}']);
+            expect(ok.writes.map((call) => call.url)).toEqual(['/appStoreVersionPhasedReleases/PR1']);
+        }
+        const typo = await run(['version', 'release', 'V1', '--version-id', 'V1']);
+        expect(typo.code).toBe(0);
+    });
+
+    test('screenshot-set delete follows the version or the CPP chain and rejects anything else', async () => {
+        const version = await run(['screenshot-set', 'delete', 'SET_V', '--yes', '--confirm', 'APP']);
+        expect(version.code).toBe(0);
+        expect(firstGets(version.calls).slice(0, 3)).toEqual([
+            '/appScreenshotSets/SET_V {"include":"appStoreVersionLocalization,appCustomProductPageLocalization"}',
+            '/appStoreVersionLocalizations/LOC {"include":"appStoreVersion"}',
+            '/appStoreVersions/V1 {"include":"app"}',
+        ]);
+        expect(version.writes.map((call) => call.url)).toEqual(['/appScreenshots/S1', '/appScreenshotSets/SET_V']);
+
+        const cpp = await run(['screenshot-set', 'delete', 'SET_C', '--yes', '--confirm', 'APP']);
+        expect(cpp.code).toBe(0);
+        expect(firstGets(cpp.calls).slice(1, 4)).toEqual([
+            '/appCustomProductPageLocalizations/CLOC {"include":"appCustomProductPageVersion"}',
+            '/appCustomProductPageVersions/CV1 {"include":"appCustomProductPage"}',
+            '/appCustomProductPages/CPP1 {"include":"app"}',
+        ]);
+
+        const wrong = await run(['screenshot-set', 'delete', 'SET_C', '--yes', '--confirm', 'OTHER']);
+        expect(wrong.code).toBe(2);
+        expect(wrong.writes).toEqual([]);
+
+        const orphan = await run(['screenshot-set', 'delete', 'SET_X', '--yes', '--confirm', 'APP']);
+        expect(orphan.code).toBe(2);
+        expect(orphan.writes).toEqual([]);
+    });
+
+    test('cpp delete binds through appCustomProductPages?include=app', async () => {
+        const wrong = await run(['cpp', 'delete', 'CPP2', '--app', 'APP', '--yes', '--confirm', 'APP']);
+        expect(wrong.code).toBe(2);
+        expect(wrong.writes).toEqual([]);
+        const ok = await run(['cpp', 'delete', 'CPP1', '--app', 'APP', '--yes', '--confirm', 'APP']);
+        expect(ok.code).toBe(0);
+        expect(ok.writes.map((call) => call.url)).toEqual(['/appCustomProductPages/CPP1']);
+    });
+
+    test('event delete/submit need the event id in the app list; a non-empty list is not enough', async () => {
+        for (const argv of [['event', 'delete', 'E1'], ['event', 'submit', 'E1']]) {
+            const ok = await run([...argv, '--yes', '--confirm', 'APP']);
+            // POST /appEventSubmissions is not in Apple's spec (MCP's original endpoint), so the
+            // strict mock answers 404 there; what matters here is that binding let the write through.
+            expect(ok.code).toBe(argv[1] === 'submit' ? 3 : 0);
+            expect(firstGets(ok.calls)[0]).toBe('/apps/APP/appEvents {"filter[id]":"E1","limit":200}');
+            expect(ok.writes.length).toBe(1);
+
+            // OTHER has events (E9) and Apple ignores filter[id], so the list is non-empty.
+            const other = await run([...argv, '--yes', '--confirm', 'OTHER']);
+            expect(other.code).toBe(2);
+            expect(other.writes).toEqual([]);
+
+            const empty = await run([...argv, '--yes', '--confirm', 'EMPTY']);
+            expect(empty.code).toBe(2);
+            expect(empty.writes).toEqual([]);
+        }
+    });
+
+    test('screenshot upload binds localization → version → app', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'ascli-r3-shot-'));
+        const file = join(dir, 'a.png');
+        writeFileSync(file, 'png-bytes');
+        const base = ['screenshot', 'upload', '--screenshot-display-type', 'APP_IPHONE_67', '--file', file, '--yes'];
+        const wrong = await run([...base, '--app-store-version-localization-id', 'LOC_OTHER', '--confirm', 'APP']);
+        expect(wrong.code).toBe(2);
+        expect(wrong.writes).toEqual([]);
+        const ok = await run([...base, '--app-store-version-localization-id', 'LOC', '--confirm', 'APP']);
+        expect(ok.code).toBe(0);
+    });
+
+    test('review reply/delete-response compare --confirm with --app only, without a binding GET', async () => {
+        const ok = await run(['review', 'reply', 'R2', '--response-body', 'hi', '--yes', '--app', 'APP', '--confirm', 'APP']);
+        expect(ok.code).toBe(0);
+        expect(ok.writes.map((call) => `${call.method} ${call.url}`)).toEqual(['POST /customerReviewResponses']);
+        expect(ok.calls.every((call) => !(call.params && 'include' in call.params))).toBe(true);
+        const del = await run(['review', 'delete-response', 'R1', '--yes', '--app', 'APP', '--confirm', 'APP']);
+        expect(del.code).toBe(0);
+        expect(del.writes.map((call) => call.url)).toEqual(['/customerReviewResponses/RESP1']);
+    });
+
+    test('version cancel is rejected before any request: the endpoint is not in the spec', async () => {
+        const cancel = await run(['version', 'cancel', 'RR1', '--yes', '--confirm', 'APP']);
+        expect(cancel.code).toBe(2);
+        expect(json(cancel.stderr).error.message).toContain('appStoreReviewRequests');
+        expect(cancel.calls).toEqual([]);
+    });
+
+    test('user --confirm matches email/username case-insensitively, userId exactly', async () => {
+        expect((await run(['user', 'remove', 'U1', '--yes', '--confirm', 'real@example.COM'])).code).toBe(0);
+        expect((await run(['user', 'remove', 'U1', '--yes', '--confirm', 'u1'])).writes).toEqual([]);
+        const invite = await run([
+            'user', 'invite', '--email', 'Ada@Example.com', '--first-name', 'A', '--last-name', 'B', '--roles', '["MARKETING"]',
+            '--yes', '--confirm', 'ada@example.com',
+        ]);
+        expect(invite.code).toBe(0);
+    });
+
+    test('dry-run lists the binding GETs separately from steps', async () => {
+        const upload = await runCli(['screenshot-set', 'delete', 'SET_V'], { env, transport: appleTransport(world()) });
+        const plan = json(upload.stdout);
+        expect(plan.confirm_reads[0]).toEqual({
+            method: 'GET',
+            path: '/appScreenshotSets/SET_V',
+            params: { include: 'appStoreVersionLocalization,appCustomProductPageLocalization' },
+        });
+        expect(plan.steps.some((step: { path: string }) => step.path.includes('{'))).toBe(false);
+        const review = json((await runCli(['review', 'reply', 'R1', '--response-body', 'x'], { env, transport: appleTransport(world()) })).stdout);
+        expect(review.confirm_reads).toEqual([]);
+        expect(review.confirm_note).toContain('--app');
+        const normal = json((await runCli(['version', 'update-localization', 'L1', '--whats-new', 'x'])).stdout);
+        expect(normal.confirm_reads).toBeUndefined();
+    });
+});
+
+describe('round 3 file precheck and paging host', () => {
+    test('R2-F07 --file pointing at a directory exits 2 before any request', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'ascli-r3-dir-'));
+        const empty = join(dir, 'empty.png');
+        writeFileSync(empty, '');
+        for (const target of [dir, empty]) {
+            for (const extra of [[], ['--yes', '--confirm', 'APP']]) {
+                const calls: HttpCall[] = [];
+                const result = await runCli([
+                    'screenshot', 'upload',
+                    '--app-store-version-localization-id', 'LOC',
+                    '--screenshot-display-type', 'APP_IPHONE_67',
+                    '--file', target,
+                    ...extra,
+                ], { env, transport: appleTransport({}, calls) });
+                expect(result.code).toBe(2);
+                expect(calls).toEqual([]);
+            }
+        }
+        expect(() => assertReadableFiles([dir])).toThrow();
+        expect(() => assertReadableFiles([empty])).toThrow();
+    });
+
+    test('getAllPages refuses links.next on another host', async () => {
+        const calls: HttpCall[] = [];
+        const client = new AppStoreConnectClient(
+            { keyId: 'k', issuerId: 'i', privateKey: 'p' },
+            {
+                transport: {
+                    async send(call) {
+                        calls.push(call);
+                        return { status: 200, headers: {}, data: { data: [{ id: 'a' }], links: { next: 'https://evil.example/v1/apps?cursor=2' } } };
+                    },
+                },
+            }
+        );
+        await expect(client.getAllPages('/apps')).rejects.toThrow('evil.example');
+        expect(calls.length).toBe(1);
     });
 });

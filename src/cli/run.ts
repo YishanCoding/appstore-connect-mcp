@@ -6,7 +6,7 @@ import { executeTool } from './execute.js';
 import { parseArgs } from './parse.js';
 import { applyLimit, apiError, authError, CliUsage, formatData, projectFields, redact, usageError } from './output.js';
 import { asParser, commandPositionals, helpText, objectShape, resolveCommand, toolsJson } from './registry.js';
-import { bindConfirm, decideSafety, effectiveRisk, extractAppId } from './safety.js';
+import { BIND_VERSION_ID_TOOLS, bindConfirm, bindingReads, decideSafety, effectiveRisk, extractAppId, type BindContext } from './safety.js';
 import { describeFiles } from './write-plan.js';
 import { assertWriteInputs, ExportFailed, PartialBatch, runWrite, writeNeedsRead, type WritePreview } from './write-call.js';
 import { AppManager } from '../programs/apps/index.js';
@@ -80,6 +80,14 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
         const envelope = dataEnvelope(parsed.body);
         if (envelope) return finish(2, '', usageError(envelope));
 
+        // --version-id is CLI-only for phased-release update/delete: it is not in the MCP schema.
+        let bindVersionId: string | undefined;
+        if (BIND_VERSION_ID_TOOLS.has(toolName) && parsed.flags.versionId !== undefined) {
+            bindVersionId = String(parsed.flags.versionId);
+            delete parsed.flags.versionId;
+        }
+        const bindCtx: BindContext = { app: parsed.app, versionId: bindVersionId };
+
         const rest = commandPositionals(entry, parsed.positionals);
         const built = buildArgs(entry.tool.inputSchema, parsed, rest, entry.meta.idParam);
         if (built.error) return finish(2, '', usageError(built.error));
@@ -110,9 +118,8 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
 
         if (decision.action === 'dry-run' && !writeNeedsRead(entry.tool.name, input)) {
             const plan = await runWrite(null, entry.tool.name, input, false) as WritePreview;
-            const files = safeFiles(input);
             if (parsed.verbose) verbose.push('dry-run: network writes=0\n');
-            return finish(0, formatData(files.length ? { ...plan, files } : plan, parsed.format), verbose.join(''));
+            return finish(0, formatData(dryRunOutput(plan, input, entry.tool.name, risk, bindCtx), parsed.format), verbose.join(''));
         }
 
         const creds = readCredentials(env);
@@ -137,13 +144,15 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
         if (decision.action === 'dry-run') {
             const previewClient = writeNeedsRead(entry.tool.name, input) ? client : null;
             const plan = await runWrite(previewClient, entry.tool.name, input, false) as WritePreview;
-            const files = safeFiles(input);
             if (parsed.verbose) verbose.push('dry-run: network writes=0\n');
-            return finish(0, formatData(files.length ? { ...plan, files } : plan, parsed.format), verbose.join(''));
+            return finish(0, formatData(dryRunOutput(plan, input, entry.tool.name, risk, bindCtx), parsed.format), verbose.join(''));
         }
 
         if (risk === 'high') {
-            const gate = await bindConfirm(entry.tool.name, input, parsed.confirm!, (path, params) => client.get(path, params));
+            const gate = await bindConfirm(entry.tool.name, input, parsed.confirm!, {
+                get: (path, params) => client.get(path, params),
+                getAll: (path, params) => client.getAllPages(path, params),
+            }, bindCtx);
             if (!gate.ok) return finish(2, '', usageError(gate.message));
         }
 
@@ -201,6 +210,35 @@ function dataEnvelope(body: unknown): string | undefined {
         return 'body 不要带 data 信封，请改用字段形式，例如 {"whatsNew":"..."}';
     }
     return undefined;
+}
+
+/**
+ * steps = what the write itself sends. confirm_reads = the extra ownership GETs that --yes
+ * sends before any write (not executed in dry-run).
+ */
+function dryRunOutput(
+    plan: WritePreview,
+    input: Record<string, unknown>,
+    toolName: string,
+    risk: 'normal' | 'high',
+    ctx: BindContext
+): Record<string, unknown> {
+    const files = safeFiles(input);
+    const out: Record<string, unknown> = files.length ? { ...plan, files } : { ...plan };
+    if (risk === 'high') {
+        out.confirm_reads = bindingReads(toolName, input, ctx);
+        out.confirm_note = confirmNote(toolName);
+    }
+    return out;
+}
+
+function confirmNote(toolName: string): string {
+    if (toolName === 'appstore_cancel_review') return '--yes 会直接拒绝：Apple 规范里没有 appStoreReviewRequests，无法确认归属';
+    if (toolName === 'appstore_respond_to_review' || toolName === 'appstore_delete_review_response') {
+        return '--yes 时 --confirm 必须等于 --app（customerReviews 不暴露所属 app，不发归属 GET）';
+    }
+    if (toolName === 'appstore_invite_user') return '--yes 时 --confirm 必须等于 email（不区分大小写），不发归属 GET';
+    return '--yes 时先按 confirm_reads 发只读 GET 确认归属，通过后才发 steps 里的写请求';
 }
 
 function safeFiles(args: Record<string, unknown>) {

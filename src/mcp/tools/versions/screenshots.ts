@@ -38,12 +38,14 @@ export function assertReadableFiles(paths: string[]): void {
     for (const file of paths) {
         try {
             accessSync(file, constants.R_OK);
+            const stat = statSync(file);
+            if (!stat.isFile() || stat.size <= 0) bad.push(file);
         } catch {
             bad.push(file);
         }
     }
     if (bad.length) {
-        throw new Error(`文件不存在或不可读: ${bad.join(', ')}`);
+        throw new Error(`文件不存在、不可读、不是普通文件或为空: ${bad.join(', ')}`);
     }
 }
 

@@ -8,7 +8,7 @@
 bun run build:cli && ln -sf "$PWD/dist/ascli" /Users/yishan/.local/bin/ascli
 ```
 
-写命令默认只打印将要发送的请求，退出码 0，不发写请求。dry-run 和 `--yes` 共用同一套请求构造；需要先读资源才能确定写请求时（例如回复评论、替换截图），dry-run 可以发只读 GET。加上 `--yes` 才执行。app 作用域的高风险命令还要 `--confirm <app-id>`：写入前 GET 目标资源（`include=app`），和资源所属 app 比对。用户命令是 `--confirm <userId 或 email>`，必须等于目标。`--body` 不要带 JSON:API 的 `data` 信封，用字段形式，例如 `{"whatsNew":"..."}`。
+写命令默认只打印将要发送的请求，退出码 0，不发写请求。dry-run 和 `--yes` 共用同一套请求构造；需要先读资源才能确定写请求时（例如回复评论、替换截图），dry-run 可以发只读 GET。加上 `--yes` 才执行。app 作用域的高风险命令还要 `--confirm <app-id>`：写入前按 Apple 规范里的关系链只读 GET，确认目标资源所属 app 与 `--confirm` 一致（每条命令的链路见 docs/cli-spec.md §3；dry-run 的 `confirm_reads` 会列出这些 GET）。例外：`review reply/delete-response` 要求 `--confirm` 等于 `--app`；`phased-release update/delete` 还要 `--version-id <appStoreVersionId>`；`version cancel` 的端点不在 Apple 规范里，`--yes` 会被拒绝。用户命令是 `--confirm <userId 或 email>`，必须等于目标（email 不区分大小写）。`--body` 不要带 JSON:API 的 `data` 信封，用字段形式，例如 `{"whatsNew":"..."}`。
 
 ## 每个域一条例子
 
@@ -20,6 +20,7 @@ ascli review list --app <app-id> --limit 5
 ascli review reply <review-id> --response-body 'Thanks for the feedback' --app <app-id>
 ascli version list --app <app-id>
 ascli version submit <version-id> --yes --confirm <app-id>
+ascli phased-release update <phased-release-id> --phased-release-state PAUSED --version-id <version-id> --yes --confirm <app-id>
 ascli version update-localization <localization-id> --body @copy.json
 ascli version-localization list --app-store-version-id <version-id>
 ascli app-info-localization update <id> --name 'New Name'

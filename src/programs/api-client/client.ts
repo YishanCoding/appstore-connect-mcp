@@ -10,6 +10,19 @@ function getProxyAgent() {
     return new HttpsProxyAgent(proxyUrl);
 }
 
+export const API_HOST = 'api.appstoreconnect.apple.com';
+
+/** links.next is only followed on Apple's API host, so the JWT never goes elsewhere. */
+export function assertApiHost(next: string): void {
+    let host: string;
+    try {
+        host = new URL(next, AppStoreConnectClient.BASE_URL).host;
+    } catch {
+        throw new Error(`links.next 不是合法 URL，已停止翻页: ${next}`);
+    }
+    if (host !== API_HOST) throw new Error(`links.next 指向 ${host}，不是 ${API_HOST}，已停止翻页`);
+}
+
 export interface ClientOptions {
     transport?: HttpTransport;
     sleep?: (ms: number) => Promise<void>;
@@ -152,6 +165,7 @@ export class AppStoreConnectClient {
             items.push(...page);
             nextUrl = response.links?.next;
             if (!nextUrl || page.length === 0) break;
+            assertApiHost(nextUrl);
         }
 
         return Number.isFinite(maxItems) ? items.slice(0, maxItems) : items;
