@@ -37,8 +37,15 @@ export class EventManager {
         };
     }
 
-    public async listEvents(appId: string): Promise<AppEventInfo[]> {
-        const items = await this.client.followPages<any>(`/apps/${appId}/appEvents`);
+    public async listEvents(appId: string, options?: { all?: boolean; limit?: number }): Promise<AppEventInfo[]> {
+        if (options?.all === false) {
+            const response = await this.client.get<{ data: any[] }>(`/apps/${appId}/appEvents`, {
+                limit: Math.min(options.limit ?? 200, 200),
+            });
+            const data = options.limit ? (response.data ?? []).slice(0, options.limit) : (response.data ?? []);
+            return data.map((v) => this.mapEvent(v));
+        }
+        const items = await this.client.getAllPages(`/apps/${appId}/appEvents`, {}, { limit: options?.limit });
         return items.map((v) => this.mapEvent(v));
     }
 
@@ -97,10 +104,22 @@ export class EventManager {
         await this.client.delete(`/appEvents/${eventId}`);
     }
 
-    public async listLocalizations(eventId: string): Promise<AppEventLocalizationInfo[]> {
-        const resp = await this.client.get<AppEventLocalizationsResponse>(
-            `/appEvents/${eventId}/localizations`
-        );
+    public async listLocalizations(
+        eventId: string,
+        options?: { all?: boolean; limit?: number }
+    ): Promise<AppEventLocalizationInfo[]> {
+        const path = `/appEvents/${eventId}/localizations`;
+        if (options?.all || (options?.limit ?? 0) > 200) {
+            const items = await this.client.getAllPages(path, {}, { limit: options?.limit });
+            return items.map((v) => this.mapLocalization(v));
+        }
+        if (options?.limit) {
+            const resp = await this.client.get<AppEventLocalizationsResponse>(path, {
+                limit: Math.min(options.limit, 200),
+            });
+            return resp.data.slice(0, options.limit).map((v) => this.mapLocalization(v));
+        }
+        const resp = await this.client.get<AppEventLocalizationsResponse>(path);
         return resp.data.map((v) => this.mapLocalization(v));
     }
 

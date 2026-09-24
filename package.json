@@ -9,6 +9,7 @@
     },
     "scripts": {
         "build": "bun build src/index.ts --outdir dist --target node --format esm --banner '#!/usr/bin/env node'",
+        "build:cli": "bun build src/cli/index.ts --compile --outfile dist/ascli",
         "prepublishOnly": "bun run build",
         "start": "node dist/index.js",
         "dev": "bun src/index.ts",

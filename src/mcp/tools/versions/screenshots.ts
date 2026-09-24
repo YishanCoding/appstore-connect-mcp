@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { createHash } from 'crypto';
-import { readFileSync, statSync } from 'fs';
+import { accessSync, constants, readFileSync, statSync } from 'fs';
 import { basename } from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -33,21 +33,60 @@ function md5File(path: string): string {
     return createHash('md5').update(data).digest('hex');
 }
 
-async function uploadScreenshot(client: AppStoreConnectClient, setId: string, filePath: string): Promise<string> {
-    const fileSize = statSync(filePath).size;
-    const fileName = basename(filePath);
-    const checksum = md5File(filePath);
+export function assertReadableFiles(paths: string[]): void {
+    const bad: string[] = [];
+    for (const file of paths) {
+        try {
+            accessSync(file, constants.R_OK);
+            const stat = statSync(file);
+            if (!stat.isFile() || stat.size <= 0) bad.push(file);
+        } catch {
+            bad.push(file);
+        }
+    }
+    if (bad.length) {
+        throw new Error(`文件不存在、不可读、不是普通文件或为空: ${bad.join(', ')}`);
+    }
+}
 
-    // Step 1: Reserve upload slot
-    const reserveBody = {
+export function screenshotSetBody(localizationId: string, screenshotDisplayType: string) {
+    return {
+        data: {
+            type: 'appScreenshotSets',
+            attributes: { screenshotDisplayType },
+            relationships: {
+                appStoreVersionLocalization: {
+                    data: { type: 'appStoreVersionLocalizations', id: localizationId },
+                },
+            },
+        },
+    };
+}
+
+export function reserveScreenshotBody(setId: string, filePath: string) {
+    return {
         data: {
             type: 'appScreenshots',
-            attributes: { fileName, fileSize },
+            attributes: { fileName: basename(filePath), fileSize: statSync(filePath).size },
             relationships: {
                 appScreenshotSet: { data: { type: 'appScreenshotSets', id: setId } },
             },
         },
     };
+}
+
+export function commitScreenshotBody(shotId: string, filePath: string) {
+    return {
+        data: {
+            type: 'appScreenshots',
+            id: shotId,
+            attributes: { uploaded: true, sourceFileChecksum: md5File(filePath) },
+        },
+    };
+}
+
+export async function uploadScreenshot(client: AppStoreConnectClient, setId: string, filePath: string): Promise<string> {
+    const reserveBody = reserveScreenshotBody(setId, filePath);
     const reserveResp = await client.post<ScreenshotReserveResponse>('/appScreenshots', reserveBody);
     const shotId = reserveResp.data.id;
     const ops: UploadOperation[] = reserveResp.data.attributes.uploadOperations || [];
@@ -56,7 +95,7 @@ async function uploadScreenshot(client: AppStoreConnectClient, setId: string, fi
     const fileData = readFileSync(filePath);
     for (const op of ops) {
         const offset = op.offset ?? 0;
-        const length = op.length ?? fileSize;
+        const length = op.length ?? fileData.length;
         const chunk = fileData.slice(offset, offset + length);
         const reqHeaders = Object.fromEntries(
             (op.requestHeaders ?? []).map((h) => [h.name, h.value])
@@ -69,23 +108,7 @@ async function uploadScreenshot(client: AppStoreConnectClient, setId: string, fi
         });
     }
 
-    // Step 3: Commit with checksum (retry up to 3×)
-    const commitBody = {
-        data: {
-            type: 'appScreenshots',
-            id: shotId,
-            attributes: { uploaded: true, sourceFileChecksum: checksum },
-        },
-    };
-    for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-            await client.patch(`/appScreenshots/${shotId}`, commitBody);
-            break;
-        } catch (e) {
-            if (attempt === 2) throw e;
-            await new Promise((r) => setTimeout(r, 3000));
-        }
-    }
+    await client.patch(`/appScreenshots/${shotId}`, commitScreenshotBody(shotId, filePath));
 
     return shotId;
 }
@@ -140,6 +163,7 @@ export function registerScreenshotTools(server: McpServer) {
             const client = makeClient();
             if (!client) return noCredentials();
             try {
+                assertReadableFiles(imagePaths);
                 // Step 1: Optionally delete existing sets of this displayType
                 if (replaceExisting) {
                     const existingResp = await client.get<any>(
@@ -158,17 +182,7 @@ export function registerScreenshotTools(server: McpServer) {
                 }
 
                 // Step 2: Create new screenshot set
-                const createSetBody = {
-                    data: {
-                        type: 'appScreenshotSets',
-                        attributes: { screenshotDisplayType },
-                        relationships: {
-                            appStoreVersionLocalization: {
-                                data: { type: 'appStoreVersionLocalizations', id: appStoreVersionLocalizationId },
-                            },
-                        },
-                    },
-                };
+                const createSetBody = screenshotSetBody(appStoreVersionLocalizationId, screenshotDisplayType);
                 const newSetResp = await client.post<any>('/appScreenshotSets', createSetBody);
                 const newSetId: string = newSetResp.data.id;
 

@@ -5,12 +5,19 @@ import { AppInfo } from '../../types.js';
 export class AppManager {
     constructor(private client: AppStoreConnectClient) {}
 
-    public async listApps(limit: number = 200): Promise<AppInfo[]> {
-        const response = await this.client.get<AppsResponse>('/apps', {
-            limit,
-        });
+    /** API resource shape (keeps attributes.*) so callers can project fields. */
+    public async listAppResources(options?: { limit?: number; all?: boolean }): Promise<App[]> {
+        const limit = options?.limit ?? 200;
+        if (options?.all) {
+            return this.client.getAllPages<App>('/apps', {}, { limit: options.limit });
+        }
+        const response = await this.client.get<AppsResponse>('/apps', { limit: Math.min(limit, 200) });
+        return (response.data ?? []).slice(0, limit);
+    }
 
-        return response.data.map((app) => this.mapAppToInfo(app));
+    public async listApps(limit: number = 200): Promise<AppInfo[]> {
+        const apps = await this.listAppResources({ limit, all: false });
+        return apps.map((app) => this.mapAppToInfo(app));
     }
 
     public async getApp(appId: string): Promise<AppInfo> {

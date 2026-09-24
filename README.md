@@ -45,6 +45,12 @@ A Model Context Protocol (MCP) server for interacting with Apple's App Store Con
 
 ## Installation
 
+Build the CLI and link it:
+
+```bash
+bun run build:cli && ln -sf "$PWD/dist/ascli" /Users/yishan/.local/bin/ascli
+```
+
 ### Claude Code
 
 ```bash

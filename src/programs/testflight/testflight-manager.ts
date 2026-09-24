@@ -14,13 +14,15 @@ import { TestFlightInfo, BetaTesterInfo } from '../../types.js';
 export class TestFlightManager {
     constructor(private client: AppStoreConnectClient) {}
 
-    public async listBetaGroups(appId: string): Promise<TestFlightInfo[]> {
-        const response = await this.client.get<BetaGroupsResponse>('/betaGroups', {
-            'filter[app]': appId,
-            limit: 200,
-        });
-
-        return response.data.map((group) => this.mapBetaGroupToInfo(group));
+    public async listBetaGroups(appId: string, options?: { all?: boolean; limit?: number }): Promise<TestFlightInfo[]> {
+        const params = { 'filter[app]': appId, limit: Math.min(options?.limit ?? 200, 200) };
+        if (options?.all) {
+            const items = await this.client.getAllPages<BetaGroup>('/betaGroups', params, { limit: options.limit });
+            return items.map((group) => this.mapBetaGroupToInfo(group));
+        }
+        const response = await this.client.get<BetaGroupsResponse>('/betaGroups', params);
+        const data = options?.limit ? response.data.slice(0, options.limit) : response.data;
+        return data.map((group) => this.mapBetaGroupToInfo(group));
     }
 
     public async addBuildToBetaGroup(buildId: string, betaGroupId: string): Promise<void> {
@@ -49,12 +51,20 @@ export class TestFlightManager {
         await this.client.delete(`/betaGroups/${betaGroupId}/relationships/builds`, data);
     }
 
-    public async listBetaTesters(betaGroupId: string, limit: number = 200): Promise<BetaTesterInfo[]> {
-        const response = await this.client.get<BetaTestersResponse>(`/betaGroups/${betaGroupId}/betaTesters`, {
-            limit,
-        });
-
-        return response.data.map((t) => this.mapBetaTesterToInfo(t));
+    public async listBetaTesters(
+        betaGroupId: string,
+        limit?: number,
+        options?: { all?: boolean }
+    ): Promise<BetaTesterInfo[]> {
+        const cap = options?.all ? limit : (limit ?? 200);
+        const pageSize = Math.min(cap ?? 200, 200);
+        const path = `/betaGroups/${betaGroupId}/betaTesters`;
+        if (options?.all) {
+            const items = await this.client.getAllPages<BetaTester>(path, { limit: pageSize }, { limit: cap });
+            return items.map((t) => this.mapBetaTesterToInfo(t));
+        }
+        const response = await this.client.get<BetaTestersResponse>(path, { limit: pageSize });
+        return response.data.slice(0, cap ?? 200).map((t) => this.mapBetaTesterToInfo(t));
     }
 
     public async addBetaTester(email: string, firstName: string, lastName: string, betaGroupIds: string[]) {
@@ -80,10 +90,21 @@ export class TestFlightManager {
         await this.client.post('/betaTesters', data);
     }
 
-    public async listBetaLocalizations(appId: string): Promise<BetaAppLocalization[]> {
-        const response = await this.client.get<BetaAppLocalizationsResponse>(
-            `/apps/${appId}/betaAppLocalizations`
-        );
+    public async listBetaLocalizations(
+        appId: string,
+        options?: { all?: boolean; limit?: number }
+    ): Promise<BetaAppLocalization[]> {
+        const path = `/apps/${appId}/betaAppLocalizations`;
+        if (options?.all || (options?.limit ?? 0) > 200) {
+            return this.client.getAllPages(path, {}, { limit: options?.limit });
+        }
+        if (options?.limit) {
+            const response = await this.client.get<BetaAppLocalizationsResponse>(path, {
+                limit: Math.min(options.limit, 200),
+            });
+            return response.data.slice(0, options.limit);
+        }
+        const response = await this.client.get<BetaAppLocalizationsResponse>(path);
         return response.data;
     }
 

@@ -5,12 +5,15 @@ import { UserInfo } from '../../types.js';
 export class UserManager {
     constructor(private client: AppStoreConnectClient) {}
 
-    public async listUsers(limit: number = 200): Promise<UserInfo[]> {
-        const response = await this.client.get<UsersResponse>('/users', {
-            limit,
-        });
-
-        return response.data.map((user) => this.mapUserToInfo(user));
+    public async listUsers(limit?: number, options?: { all?: boolean }): Promise<UserInfo[]> {
+        const cap = options?.all ? limit : (limit ?? 200);
+        const pageSize = Math.min(cap ?? 200, 200);
+        if (options?.all) {
+            const items = await this.client.getAllPages<User>('/users', { limit: pageSize }, { limit: cap });
+            return items.map((user) => this.mapUserToInfo(user));
+        }
+        const response = await this.client.get<UsersResponse>('/users', { limit: pageSize });
+        return response.data.slice(0, cap ?? 200).map((user) => this.mapUserToInfo(user));
     }
 
     public async inviteUser(

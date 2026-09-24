@@ -15,6 +15,37 @@ import {
 // Bypass system proxy for S3 and CDN calls — same fix as the Python upload script
 const s3Client = axios.create({ proxy: false });
 
+export function buildCppCreateBody(appId: string, name: string, promotionalText: string) {
+    return {
+        data: {
+            type: 'appCustomProductPages',
+            attributes: { name },
+            relationships: {
+                app: { data: { type: 'apps', id: appId } },
+                appCustomProductPageVersions: {
+                    data: [{ type: 'appCustomProductPageVersions', id: '${v1}' }],
+                },
+            },
+        },
+        included: [
+            {
+                type: 'appCustomProductPageVersions',
+                id: '${v1}',
+                relationships: {
+                    appCustomProductPageLocalizations: {
+                        data: [{ type: 'appCustomProductPageLocalizations', id: '${loc1}' }],
+                    },
+                },
+            },
+            {
+                type: 'appCustomProductPageLocalizations',
+                id: '${loc1}',
+                attributes: { locale: 'en-US', promotionalText },
+            },
+        ],
+    };
+}
+
 function md5File(path: string): string {
     const data = readFileSync(path);
     return createHash('md5').update(data).digest('hex');
@@ -26,17 +57,21 @@ export class CppManager {
         private appId: string
     ) {}
 
-    public async listCpps(): Promise<CppInfo[]> {
-        const resp = await this.client.get<ListCppsResponse>(
-            `/apps/${this.appId}/appCustomProductPages`,
-            { limit: 200 }
-        );
-        return resp.data.map((d) => ({
+    public async listCpps(options?: { all?: boolean; limit?: number }): Promise<CppInfo[]> {
+        const path = `/apps/${this.appId}/appCustomProductPages`;
+        const map = (d: ListCppsResponse['data'][number]): CppInfo => ({
             id: d.id,
             name: d.attributes.name,
             state: d.attributes.state,
             url: `https://apps.apple.com/us/app/id${this.appId}?ppid=${d.id}`,
-        }));
+        });
+        if (options?.all) {
+            const items = await this.client.getAllPages<ListCppsResponse['data'][number]>(path, {}, { limit: options.limit });
+            return items.map(map);
+        }
+        const resp = await this.client.get<ListCppsResponse>(path, { limit: Math.min(options?.limit ?? 200, 200) });
+        const data = options?.limit ? resp.data.slice(0, options.limit) : resp.data;
+        return data.map(map);
     }
 
     public async deleteCpp(cppId: string): Promise<void> {
@@ -71,35 +106,7 @@ export class CppManager {
             throw new Error(`promotionalText exceeds 170 chars (${promotionalText.length})`);
         }
 
-        // 1. Atomic creation: CPP + version + locale in a single POST
-        const createBody = {
-            data: {
-                type: 'appCustomProductPages',
-                attributes: { name },
-                relationships: {
-                    app: { data: { type: 'apps', id: this.appId } },
-                    appCustomProductPageVersions: {
-                        data: [{ type: 'appCustomProductPageVersions', id: '${v1}' }],
-                    },
-                },
-            },
-            included: [
-                {
-                    type: 'appCustomProductPageVersions',
-                    id: '${v1}',
-                    relationships: {
-                        appCustomProductPageLocalizations: {
-                            data: [{ type: 'appCustomProductPageLocalizations', id: '${loc1}' }],
-                        },
-                    },
-                },
-                {
-                    type: 'appCustomProductPageLocalizations',
-                    id: '${loc1}',
-                    attributes: { locale: 'en-US', promotionalText },
-                },
-            ],
-        };
+        const createBody = buildCppCreateBody(this.appId, name, promotionalText);
 
         const createResp = await this.client.post<{ data: { id: string }; included: { type: string; id: string }[] }>(
             '/appCustomProductPages',
@@ -187,7 +194,6 @@ export class CppManager {
             });
         }
 
-        // Step 3: Commit with checksum (retry up to 3×)
         const commitBody = {
             data: {
                 type: 'appScreenshots',
@@ -195,15 +201,7 @@ export class CppManager {
                 attributes: { uploaded: true, sourceFileChecksum: checksum },
             },
         };
-        for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-                await this.client.patch(`/appScreenshots/${shotId}`, commitBody);
-                break;
-            } catch (e) {
-                if (attempt === 2) throw e;
-                await new Promise((r) => setTimeout(r, 3000));
-            }
-        }
+        await this.client.patch(`/appScreenshots/${shotId}`, commitBody);
 
         return shotId;
     }
