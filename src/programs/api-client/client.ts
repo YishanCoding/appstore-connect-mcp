@@ -145,6 +145,7 @@ export class AppStoreConnectClient {
         let nextUrl: string | undefined;
         let first = true;
         let pages = 0;
+        let emptyWithNext = false;
 
         while (items.length < maxItems && pages < 1000) {
             pages += 1;
@@ -164,12 +165,15 @@ export class AppStoreConnectClient {
             const page = response.data ?? [];
             items.push(...page);
             nextUrl = response.links?.next;
+            if (nextUrl && page.length === 0) emptyWithNext = true;
             if (!nextUrl || page.length === 0) break;
             assertApiHost(nextUrl);
         }
 
         if (nextUrl && items.length < maxItems) {
-            throw new Error('分页在 1000 页后仍有下一页，结果不完整');
+            throw new Error(emptyWithNext
+                ? `分页在第 ${pages} 页返回空数据但仍有下一页，结果不完整`
+                : '分页在 1000 页后仍有下一页，结果不完整');
         }
 
         return Number.isFinite(maxItems) ? items.slice(0, maxItems) : items;

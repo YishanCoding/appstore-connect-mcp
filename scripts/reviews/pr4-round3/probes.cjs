@@ -140,7 +140,8 @@ function mainClient(error) {
       assert.equal(norm(dryAsc),norm(actualAsc));
       assert.equal(s3.length,2);
       const plannedPuts=dry.steps.filter(x=>x.method==='PUT');
-      const unlistedUploads=fixed?s3.filter(()=>plannedPuts.length===0).map(x=>({method:x.method,path:x.path,bytes:x.body.length/2})):s3.map(x=>({method:x.method,path:x.path,bytes:x.body.length/2}));
+      const putsCoverUploads=plannedPuts.length===args.imagePaths.length&&plannedPuts.every(step=>step.path==='{uploadOperations[i].url}');
+      const unlistedUploads=fixed?s3.filter(()=>!putsCoverUploads).map(x=>({method:x.method,path:x.path,bytes:x.body.length/2})):s3.map(x=>({method:x.method,path:x.path,bytes:x.body.length/2}));
       if(fixed){
         assert.equal(unlistedUploads.length,0);
         assert.ok(plannedPuts.every(step=>step.path==='{uploadOperations[i].url}'&&String(step.note||'').includes('reserve')));

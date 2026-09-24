@@ -99,6 +99,7 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
 | 3e6b711 / d9d6479 | 截图和 CPP 截图的提交 PATCH 只发一次，不再失败后隔 3 秒重试 3 次；所有写请求都不重试 | 提交 PATCH 偶发失败时 MCP 直接报错 | 写请求重试可能重复提交；与 CLI "写不重试" 一致 |
 | 共享客户端 | 读请求遇到 HTTP 429/5xx 最多重试 3 次，按 `Retry-After` 或指数退避等待（origin/main 不重试）。网络异常（例如 ENOTFOUND）不重试 | 限流或服务端 5xx 时 MCP 的读请求会多等几次再报错。连不上主机时只试一次 | CLI 与 MCP 共用 `sendWithPolicy`。网络异常与 main 一样不重试 |
 | 共享客户端 | 抛出的错误类型从 `Error` 变成 `AscHttpError`（message 文本不变，见 F-06）；review 相关的 404 判断同时认两种错误 | 只有按错误类型判断的调用方可见；MCP 返回给模型的文本不变 | 统一退出码映射 |
+| 分页上限 | `getAllPages` 读到 1000 页（或某页为空）时如果还有 `links.next`，抛出「结果不完整」错误，不再返回已读部分（origin/main 继续翻页，没有上限） | 单个列表超过 1000 页时 MCP 报错，不再返回数据 | 静默截断会让归属校验和统计拿到不完整数据；1000 页 × 200 条已远超实际数据量 |
 | 列表分页 | 各 list 方法把单页 `limit` 限制在 200 以内、结果再截到上限；`review list` 首页请求的 `limit` 参数由 100 变 200（返回条数上限仍是 100） | MCP 传入 `limit > 200` 时不再被 Apple 400 拒绝，而是按 200 一页取；请求参数与 origin/main 略有不同 | Apple 单页上限 200 |
 | R3 | `getAllPages` 只跟随 host 为 `api.appstoreconnect.apple.com` 的 `links.next`，其他 host 直接报错 | 服务端返回别的域名的翻页链接（正常不会发生） | 防止把 JWT 发到别的域名 |
 

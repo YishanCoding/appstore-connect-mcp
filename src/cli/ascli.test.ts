@@ -9,7 +9,7 @@ import { assertReadableFiles, uploadScreenshot } from '../mcp/tools/versions/scr
 import { projectFields } from './output.js';
 import { runCli } from './run.js';
 import { decideSafety } from './safety.js';
-import { appleTransport } from './test-support/apple-spec-mock.js';
+import { appleTransport, startUploadSink } from './test-support/apple-spec-mock.js';
 
 const env = {
     APP_STORE_CONNECT_KEY_ID: 'TESTKEYID',
@@ -662,10 +662,12 @@ describe('round 2 write safety', () => {
         const file = join(dir, 'shot.png');
         writeFileSync(file, 'png-bytes');
         const calls: HttpCall[] = [];
+        const sink = await startUploadSink();
         const transport = appleTransport({
             versions: { V1: { app: 'APP' } },
             versionLocalizations: { LOC: { version: 'V1' } },
             screenshotSets: { 'set-old': { versionLocalization: 'LOC', screenshots: ['shot1'] } },
+            upload: { url: sink.url, parts: [{ offset: 0, length: 3 }, { offset: 3, length: 6 }] },
         }, calls);
         const dry = await runCli([
             'screenshot', 'upload',
@@ -697,7 +699,13 @@ describe('round 2 write safety', () => {
             '--image-paths', JSON.stringify([file]),
             '--yes', '--confirm', 'APP',
         ], { env, transport });
-        expect(live.code === 0 || live.code === 3).toBe(true);
+        await sink.stop();
+        expect(live.code).toBe(0);
+        expect(sink.puts).toEqual([
+            { method: 'PUT', path: '/part-0', body: 'png' },
+            { method: 'PUT', path: '/part-1', body: '-bytes' },
+        ]);
+        expect(calls.filter((call) => call.method === 'PATCH').map((call) => call.url)).toEqual(['/appScreenshots/created-1']);
         expect(calls.slice(0, 2).map((call) => `${call.method} ${call.url} ${JSON.stringify(call.params)}`)).toEqual([
             'GET /appStoreVersionLocalizations/LOC {"include":"appStoreVersion"}',
             'GET /appStoreVersions/V1 {"include":"app"}',
@@ -894,9 +902,9 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
         reviews: { R1: { response: 'RESP1', app: 'APP' }, R2: { app: 'APP' }, R_OTHER: { app: 'OTHER' } },
         users: { U1: { username: 'Real@Example.com', email: 'Real@Example.com' } },
     });
-    const run = async (argv: string[]) => {
+    const run = async (argv: string[], w: ReturnType<typeof world> & { upload?: { url: string } } = world()) => {
         const calls: HttpCall[] = [];
-        const result = await runCli(argv, { env, transport: appleTransport(world(), calls), sleep: async () => {} });
+        const result = await runCli(argv, { env, transport: appleTransport(w, calls), sleep: async () => {} });
         return { ...result, calls, writes: calls.filter((call) => call.method !== 'GET') };
     };
     const firstGets = (calls: HttpCall[]) =>
@@ -913,6 +921,20 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
         expect((await get('/appStoreReviewRequests/RR1')).status).toBe(404);
         expect((await get('/appStoreVersionPhasedReleases/PR1')).status).toBe(405);
         expect((await get('/appStoreVersions/V1', { include: 'app,appStoreVersionPhasedRelease' })).status).toBe(200);
+    });
+
+    test('the mock enforces required create relationships from Apple request schemas', async () => {
+        const t = appleTransport(world());
+        const post = (url: string, data: unknown) => t.send({ method: 'POST', url, data });
+        const reply = { type: 'customerReviewResponses', attributes: { responseBody: 'hi' } };
+        const missing = await post('/customerReviewResponses', { data: reply });
+        expect(missing.status).toBe(400);
+        expect(JSON.stringify(missing.data)).toContain('relationships.review');
+        const linked = { ...reply, relationships: { review: { data: { type: 'customerReviews', id: 'R1' } } } };
+        expect((await post('/customerReviewResponses', { data: linked })).status).toBe(201);
+        const shot = { type: 'appScreenshots', attributes: { fileName: 'a.png', fileSize: 1 } };
+        expect((await post('/appScreenshots', { data: shot })).status).toBe(400);
+        expect((await post('/appStoreVersions', { data: { type: 'appStoreVersions', attributes: { versionString: '1.0', platform: 'IOS' } } })).status).toBe(400);
     });
 
     test('version-scoped commands bind through appStoreVersions?include=app', async () => {
@@ -1018,9 +1040,12 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
         const wrong = await run([...base, '--app-store-version-localization-id', 'LOC_OTHER', '--confirm', 'APP']);
         expect(wrong.code).toBe(2);
         expect(wrong.writes).toEqual([]);
-        const ok = await run([...base, '--app-store-version-localization-id', 'LOC', '--confirm', 'APP']);
+        const sink = await startUploadSink();
+        const ok = await run([...base, '--app-store-version-localization-id', 'LOC', '--confirm', 'APP'], { ...world(), upload: { url: sink.url } });
+        await sink.stop();
         expect(ok.calls.some((call) => call.method === 'POST' && call.url === '/appScreenshotSets')).toBe(true);
-        expect(ok.code === 0 || ok.code === 3).toBe(true);
+        expect(ok.code).toBe(0);
+        expect(sink.puts).toEqual([{ method: 'PUT', path: '/part-0', body: 'p' }]);
     });
 
     test('review reply/delete-response require the review id in the confirmed app list', async () => {

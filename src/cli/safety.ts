@@ -40,7 +40,7 @@ export interface BindReader {
 
 /** CLI-only context the binding needs beyond the MCP args. */
 export interface BindContext {
-    /** --app (review commands compare --confirm to it). */
+    /** --app as typed. Not used for ownership: review binding reads GET /apps/{confirm}/customerReviews. */
     app?: string;
     /** --version-id (phased-release update/delete). */
     versionId?: string;

@@ -10,6 +10,24 @@ import json
 import sys
 
 spec = json.load(open(sys.argv[1]))
+
+
+def resolve(node):
+    while isinstance(node, dict) and '$ref' in node:
+        node = spec['components']['schemas'][node['$ref'].split('/')[-1]]
+    return node
+
+
+def required_relationships(op):
+    """Relationship names a POST body must carry, per the request schema's `required` lists."""
+    body = resolve(op.get('requestBody', {}).get('content', {}).get('application/json', {}).get('schema'))
+    data = resolve((body or {}).get('properties', {}).get('data'))
+    if not isinstance(data, dict) or 'relationships' not in data.get('required', []):
+        return []
+    rels = resolve(data['properties']['relationships'])
+    return sorted(rels.get('required', []))
+
+
 paths = {}
 for path, item in sorted(spec['paths'].items()):
     if not path.startswith('/v1/'):
@@ -24,6 +42,11 @@ for path, item in sorted(spec['paths'].items()):
         filters = [p['name'][len('filter['):-1] for p in params if p.get('name', '').startswith('filter[')]
         if filters:
             entry['filter'] = filters
+    post = item.get('post')
+    if post:
+        rels = required_relationships(post)
+        if rels:
+            entry['relationships'] = rels
     paths[path[len('/v1'):]] = entry
 json.dump({'specVersion': spec['info']['version'], 'paths': paths}, sys.stdout, indent=0, separators=(',', ':'))
 sys.stdout.write('\n')

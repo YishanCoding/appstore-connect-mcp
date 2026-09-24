@@ -1,4 +1,6 @@
 import { readFileSync } from 'fs';
+import { createServer } from 'http';
+import type { AddressInfo } from 'net';
 import { fileURLToPath } from 'url';
 import type { HttpCall, HttpResult } from '../../programs/api-client/policy.js';
 
@@ -41,6 +43,24 @@ export interface AppleWorld {
     cpps?: Record<string, { app: string }>;
     reviews?: Record<string, { response?: string; app?: string }>;
     users?: Record<string, { username?: string; email?: string }>;
+    /** Where reserve responses point uploadOperations (see startUploadSink). Default: an unreachable URL. */
+    upload?: { url: string; parts?: { offset: number; length: number }[] };
+}
+
+/** Local HTTP sink standing in for Apple's upload hosts; records every PUT with its bytes. */
+export async function startUploadSink() {
+    const puts: { method: string; path: string; body: string }[] = [];
+    const server = createServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', () => {
+            puts.push({ method: req.method ?? '', path: req.url ?? '', body: Buffer.concat(chunks).toString() });
+            res.writeHead(200).end();
+        });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    return { url: `http://127.0.0.1:${port}`, puts, stop: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 
 const API = 'https://api.appstoreconnect.apple.com/v1';
@@ -96,7 +116,8 @@ export function specViolation(call: HttpCall): HttpResult | undefined {
             if (!data.attributes || typeof data.attributes !== 'object' || Array.isArray(data.attributes)) {
                 return error(400, 'ENTITY_ERROR', 'data.attributes is required');
             }
-            for (const name of spec.relationships ?? []) {
+            // Required relationships come from Apple's create (POST) request schemas.
+            for (const name of call.method === 'POST' ? spec.relationships ?? [] : []) {
                 if (!data.relationships?.[name]) return error(400, 'ENTITY_ERROR', `relationships.${name} is required`);
             }
         }
@@ -262,7 +283,11 @@ export function appleTransport(world: AppleWorld, calls: HttpCall[] = []) {
                         data: {
                             id: 'created-1',
                             attributes: {
-                                uploadOperations: [{ method: 'PUT', url: 'http://127.0.0.1:1/part', offset: 0, length: 1 }],
+                                uploadOperations: (world.upload?.parts ?? [{ offset: 0, length: 1 }]).map((part, i) => ({
+                                    method: 'PUT',
+                                    url: `${world.upload?.url ?? 'http://127.0.0.1:1'}/part-${i}`,
+                                    ...part,
+                                })),
                             },
                         },
                     },
