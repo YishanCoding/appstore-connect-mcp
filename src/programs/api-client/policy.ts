@@ -31,14 +31,21 @@ export class AscHttpError extends Error {
     }
 }
 
+/** Same text origin/main's axios interceptor produced: every error, joined by `, `. */
+export function formatApiErrors(errors: { title?: string; detail?: string }[] | undefined): string | undefined {
+    if (!errors || errors.length === 0) return undefined;
+    return errors.map((error) => `${error.title}: ${error.detail || ''}`).join(', ');
+}
+
 export function errorFromResponse(result: HttpResult): AscHttpError {
     const data = result.data as
         | { errors?: { status?: string; code?: string; title?: string; detail?: string }[] }
         | undefined;
-    const first = data?.errors?.[0];
+    const errors = data?.errors ?? [];
+    const first = errors[0];
     const status = Number(first?.status ?? result.status) || result.status;
     const code = first?.code || 'UNKNOWN';
-    const detail = [first?.title, first?.detail].filter(Boolean).join(': ') || `HTTP ${result.status}`;
+    const detail = formatApiErrors(errors) || `HTTP ${result.status}`;
     return new AscHttpError(status, code, detail);
 }
 
@@ -46,19 +53,32 @@ export function isRetryableStatus(status: number): boolean {
     return status === 429 || status >= 500;
 }
 
+export const MAX_RETRY_AFTER_MS = 60_000;
+
 export function retryDelayMs(
     headers: Record<string, string | undefined>,
     attempt: number,
     now = Date.now()
 ): number {
     const raw = headers['retry-after'] ?? headers['Retry-After'];
+    let delay: number | undefined;
     if (raw) {
         const seconds = Number(raw);
-        if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-        const when = Date.parse(raw);
-        if (!Number.isNaN(when)) return Math.max(0, when - now);
+        if (Number.isFinite(seconds)) delay = Math.max(0, seconds * 1000);
+        else {
+            const when = Date.parse(raw);
+            if (!Number.isNaN(when)) delay = Math.max(0, when - now);
+        }
     }
-    return Math.min(8000, 200 * 2 ** attempt);
+    if (delay === undefined) delay = Math.min(8000, 200 * 2 ** attempt);
+    if (delay > MAX_RETRY_AFTER_MS) {
+        throw new AscHttpError(
+            429,
+            'RETRY_AFTER',
+            `Retry-After ${Math.ceil(delay / 1000)}s exceeds 60s`
+        );
+    }
+    return delay;
 }
 
 const sleepDefault = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

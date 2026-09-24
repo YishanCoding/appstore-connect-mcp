@@ -33,6 +33,8 @@ export function formatData(data: unknown, format: 'json' | 'ndjson' | 'table'): 
     return JSON.stringify(data, null, 2) + '\n';
 }
 
+export class CliUsage extends Error {}
+
 export function usageError(message: string): string {
     return JSON.stringify({ error: { type: 'usage', message } }) + '\n';
 }

@@ -34,6 +34,7 @@ export class AppStoreConnectClient {
         const agent = getProxyAgent();
         this.client = axios.create({
             baseURL: config.baseURL || AppStoreConnectClient.BASE_URL,
+            timeout: 60_000,
             headers: {
                 'Content-Type': 'application/json',
             },

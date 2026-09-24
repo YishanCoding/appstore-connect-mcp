@@ -71,7 +71,11 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
             return parsed;
         }
 
-        if (BOOL_GLOBALS.has(rawName) && inline === undefined) {
+        if (BOOL_GLOBALS.has(rawName)) {
+            if (inline !== undefined) {
+                parsed.error = `未知 flag: --${rawName}=${inline}；--${rawName} 是开关，不能赋值`;
+                return parsed;
+            }
             if (rawName === 'all') parsed.all = true;
             if (rawName === 'yes') parsed.yes = true;
             if (rawName === 'verbose') parsed.verbose = true;

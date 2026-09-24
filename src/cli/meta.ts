@@ -17,6 +17,8 @@ export interface ToolMeta {
     attrKeys?: string[];
     relationship?: { key: string; type: string; idParam: string };
     body?: 'jsonapi' | 'none' | 'builds' | 'raw';
+    /** High-risk --confirm checks the resource's app, or a userId/email. */
+    confirm?: 'app' | 'user';
 }
 
 const read = (command: string, extra: Partial<ToolMeta> = {}): ToolMeta => ({
@@ -35,7 +37,7 @@ const write = (command: string, extra: Partial<ToolMeta> = {}): ToolMeta => ({
 });
 
 const high = (command: string, extra: Partial<ToolMeta> = {}): ToolMeta =>
-    write(command, { risk: 'high', ...extra });
+    write(command, { risk: 'high', confirm: 'app', ...extra });
 
 /** Canonical command + write-plan for every MCP tool. Schemas stay in registerTool. */
 export const TOOL_META: Record<string, ToolMeta> = {
@@ -166,6 +168,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
         path: '/appScreenshotSets',
         resourceType: 'appScreenshotSets',
         attrKeys: ['screenshotDisplayType'],
+        confirm: 'app',
         relationship: {
             key: 'appStoreVersionLocalization',
             type: 'appStoreVersionLocalizations',
@@ -244,12 +247,14 @@ export const TOOL_META: Record<string, ToolMeta> = {
         path: '/userInvitations',
         resourceType: 'userInvitations',
         attrKeys: ['email', 'firstName', 'lastName', 'roles', 'allAppsVisible', 'provisioningAllowed'],
+        confirm: 'user',
     }),
     appstore_remove_user: high('user remove', {
         idParam: 'userId',
         method: 'DELETE',
         path: '/users/{userId}',
         body: 'none',
+        confirm: 'user',
     }),
     appstore_update_user_roles: high('user update-roles', {
         idParam: 'userId',
@@ -257,6 +262,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
         path: '/users/{userId}',
         resourceType: 'users',
         attrKeys: ['roles'],
+        confirm: 'user',
     }),
     appstore_list_beta_groups: read('beta-group list'),
     appstore_add_build_to_beta_group: write('beta-group add-build', {

@@ -104,10 +104,22 @@ export class EventManager {
         await this.client.delete(`/appEvents/${eventId}`);
     }
 
-    public async listLocalizations(eventId: string): Promise<AppEventLocalizationInfo[]> {
-        const resp = await this.client.get<AppEventLocalizationsResponse>(
-            `/appEvents/${eventId}/localizations`
-        );
+    public async listLocalizations(
+        eventId: string,
+        options?: { all?: boolean; limit?: number }
+    ): Promise<AppEventLocalizationInfo[]> {
+        const path = `/appEvents/${eventId}/localizations`;
+        if (options?.all || (options?.limit ?? 0) > 200) {
+            const items = await this.client.getAllPages(path, {}, { limit: options?.limit });
+            return items.map((v) => this.mapLocalization(v));
+        }
+        if (options?.limit) {
+            const resp = await this.client.get<AppEventLocalizationsResponse>(path, {
+                limit: Math.min(options.limit, 200),
+            });
+            return resp.data.slice(0, options.limit).map((v) => this.mapLocalization(v));
+        }
+        const resp = await this.client.get<AppEventLocalizationsResponse>(path);
         return resp.data.map((v) => this.mapLocalization(v));
     }
 

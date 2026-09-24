@@ -55,7 +55,7 @@ ascli smoke --output <path>      # 只读线上验收（统一约定 §6）
 
 1. 所有写命令（§5 写清单）默认 dry-run：打印将要发的 method、path、body 到 stdout，`"dry_run": true`，**不发任何网络写请求**，退出码 0。
 2. 带 `--yes` 才执行。写请求永不自动重试；读请求 429/5xx 退避重试（统一约定 §4）。
-3. 以下高风险命令（按 MCP 工具名列出，对应的规范命令同样适用）除了 `--yes` 还必须带 `--confirm <app-id>`，且值要和目标 app 一致，否则拒绝（退出码 2）：`submit-for-review`、`cancel-review`、`release-version`、`create/update/delete-phased-release`、`respond-to-review`、`delete-review-response`、`delete-cpp`、`delete-screenshot-set`、`remove-user`、`invite-user`、`update-user-roles`、`submit-event`、`delete-event`。
+3. 以下高风险命令除了 `--yes` 还必须带 `--confirm`，否则拒绝（退出码 2），并且不发写请求。app 作用域命令的 `--confirm <app-id>` 不和 `--app` 比字符串：写入前先 `GET` 目标资源（`include=app`），用返回的 `app.id` 比对，不一致就拒绝。包括 `submit-for-review`、`cancel-review`、`release-version`、`create/update/delete-phased-release`、`respond-to-review`、`delete-review-response`、`delete-cpp`、`delete-screenshot-set`、`submit-event`、`delete-event`。`upload-screenshots` 在 `replaceExisting=true`（默认）时同样按高风险处理。`invite-user`、`remove-user`、`update-user-roles` 的 `--confirm` 是 `<userId 或 email>`，必须等于目标，不能用任意 app id 代替。
 4. `store-credentials` 不做成 CLI 命令（CLI 是无状态的，凭据只从环境变量读），`ascli tools --json` 里把它标成 `"command": null, "reason": "stateless"`。
 
 ### 输出与退出码

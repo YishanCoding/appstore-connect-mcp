@@ -8,7 +8,7 @@
 bun run build:cli && ln -sf "$PWD/dist/ascli" /Users/yishan/.local/bin/ascli
 ```
 
-写命令默认只打印将要发送的请求，退出码 0，不访问网络。加上 `--yes` 才执行。高风险命令还要 `--confirm <app-id>`，并且和 `--app`（或参数里的 app id）一致。
+写命令默认只打印将要发送的请求，退出码 0，不发写请求。dry-run 和 `--yes` 共用同一套请求构造；需要先读资源才能确定写请求时（例如回复评论、替换截图），dry-run 可以发只读 GET。加上 `--yes` 才执行。app 作用域的高风险命令还要 `--confirm <app-id>`：写入前 GET 目标资源（`include=app`），和资源所属 app 比对。用户命令是 `--confirm <userId 或 email>`，必须等于目标。`--body` 不要带 JSON:API 的 `data` 信封，用字段形式，例如 `{"whatsNew":"..."}`。
 
 ## 每个域一条例子
 
@@ -19,17 +19,17 @@ ascli build list --app <app-id> --limit 20
 ascli review list --app <app-id> --limit 5
 ascli review reply <review-id> --response-body 'Thanks for the feedback' --app <app-id>
 ascli version list --app <app-id>
-ascli version submit <version-id> --yes --app <app-id> --confirm <app-id>
+ascli version submit <version-id> --yes --confirm <app-id>
 ascli version update-localization <localization-id> --body @copy.json
 ascli version-localization list --app-store-version-id <version-id>
 ascli app-info-localization update <id> --name 'New Name'
 ascli screenshot-set list --app-store-version-localization-id <id>
-ascli screenshot upload --app-store-version-localization-id <id> --screenshot-display-type APP_IPHONE_65 --file /path/shot.png
+ascli screenshot upload --app-store-version-localization-id <id> --screenshot-display-type APP_IPHONE_65 --image-paths '["/path/shot.png"]' --yes --confirm <app-id>
 ascli cpp list --app <app-id>
 ascli event list --app <app-id>
-ascli event submit <event-id> --yes --app <app-id> --confirm <app-id>
+ascli event submit <event-id> --yes --confirm <app-id>
 ascli user list --limit 50
-ascli user invite --email person@example.com --first-name Ada --last-name Lovelace --roles '["MARKETING"]' --yes --app <app-id> --confirm <app-id>
+ascli user invite --email person@example.com --first-name Ada --last-name Lovelace --roles '["MARKETING"]' --yes --confirm person@example.com
 ascli beta-group list --app <app-id>
 ascli beta-tester list <beta-group-id>
 ascli in-app-purchase list --app <app-id>
@@ -48,7 +48,10 @@ ascli smoke --output /tmp/ascli-smoke.json
 ## 已知问题
 
 - Analytics 的 `by-source` 和 `export` 依赖 opencli 里已经登录的 App Store Connect 浏览器会话，失败时通常是会话而不是 API key。
-- 写请求（含截图提交 PATCH）只发一次。读请求对 429/5xx 最多重试 3 次，并遵守 `Retry-After`。
+- 写请求（含截图和 CPP 的提交 PATCH）只发一次，不再像早期实现那样对提交 PATCH 重试 3 次。这是 CLI 和 MCP 共用客户端之后的行为：写不重试。读请求对 429/5xx 最多重试 3 次；`Retry-After` 超过 60 秒直接报错，不继续等。axios 超时 60 秒。
+- 同一参数如果在 `--body`、flag、位置参数里给出不同的值，退出码 2。未知 flag（包括 `--yes=true`）退出码 2，不会静默丢掉。
+- `screenshot upload` 在删除线上截图之前检查每个本地文件存在且可读。`replaceExisting=true`（默认）是高风险。
+- `auth check` 遇到 HTTP 401 退出码 4。`analytics export` 的 `failed` 非空时退出码 3，并在 stdout 带上结果。
 - MCP 的批量 localization 会把单条失败收进结果对象并仍返回成功。CLI 遇到第一条失败就退出码 3。
 - 每次请求都会重新签 JWT，没有进程内缓存。
 - `store-credentials` 没有 CLI 命令。CLI 不保存凭据。

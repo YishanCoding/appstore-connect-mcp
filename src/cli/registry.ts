@@ -103,7 +103,7 @@ export function helpText(resource?: string, verb?: string): string {
             ...resources.map((name) => `  ${name}`),
             '',
             'Global flags: --format json|ndjson|table --fields a,b.c --limit N --all --yes --verbose --help',
-            'Writes default to dry-run. --yes executes. High-risk also needs --confirm <app-id>.',
+            'Writes default to dry-run. --yes executes. High-risk app commands need --confirm <app-id> (checked against the resource). User commands need --confirm <userId|email>.',
         ].join('\n');
     }
 
@@ -127,7 +127,15 @@ export function helpText(resource?: string, verb?: string): string {
         '',
         `kind: ${entry.meta.kind}  risk: ${entry.meta.risk}`,
         entry.meta.kind === 'write' ? '默认 dry-run；真正执行加 --yes。' : '',
-        entry.meta.risk === 'high' ? '高风险：--yes 之外还要 --confirm <app-id>，并与 --app 一致。' : '',
+        entry.meta.risk === 'high' && entry.meta.confirm === 'user'
+            ? '高风险：--yes 之外还要 --confirm <userId 或 email>，必须等于目标。'
+            : '',
+        entry.meta.risk === 'high' && entry.meta.confirm !== 'user'
+            ? '高风险：--yes 之外还要 --confirm <app-id>。写入前会 GET 目标资源（include=app），与资源所属 app 比对。'
+            : '',
+        entry.tool.name === 'appstore_upload_screenshots'
+            ? 'replaceExisting 默认 true，此时按高风险处理，需要 --confirm <app-id>。删除线上截图前会先检查本地文件。'
+            : '',
         '参数:',
     ];
     if (shape) {

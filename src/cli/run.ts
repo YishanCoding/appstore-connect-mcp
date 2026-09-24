@@ -4,10 +4,11 @@ import { AppStoreConnectClient } from '../programs/api-client/client.js';
 import { AscHttpError, type HttpCall, type HttpTransport } from '../programs/api-client/policy.js';
 import { executeTool } from './execute.js';
 import { parseArgs } from './parse.js';
-import { applyLimit, apiError, authError, formatData, projectFields, redact, usageError } from './output.js';
+import { applyLimit, apiError, authError, CliUsage, formatData, projectFields, redact, usageError } from './output.js';
 import { asParser, commandPositionals, helpText, objectShape, resolveCommand, toolsJson } from './registry.js';
-import { decideSafety, extractAppId } from './safety.js';
-import { includesJson, planWrite } from './write-plan.js';
+import { bindConfirm, decideSafety, effectiveRisk, extractAppId } from './safety.js';
+import { describeFiles } from './write-plan.js';
+import { assertWriteInputs, ExportFailed, PartialBatch, runWrite, writeNeedsRead, type WritePreview } from './write-call.js';
 import { AppManager } from '../programs/apps/index.js';
 import { ReviewManager } from '../programs/reviews/index.js';
 import { VersionManager } from '../programs/versions/index.js';
@@ -26,8 +27,6 @@ export interface RunOptions {
     sleep?: (ms: number) => Promise<void>;
 }
 
-class UsageError extends Error {}
-
 export async function runCli(argv: string[], options: RunOptions = {}): Promise<RunResult> {
     const env = options.env ?? process.env;
     const calls: HttpCall[] = [];
@@ -42,6 +41,7 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
         calls,
     });
 
+    let toolName = '';
     try {
         const parsed = parseArgs(argv, options.cwd);
         if (parsed.error) return finish(2, '', usageError(parsed.error));
@@ -76,33 +76,17 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
             return finish(2, '', usageError('stateless：CLI 不保存凭据，只读取环境变量'));
         }
 
+        toolName = entry.tool.name;
+        const envelope = dataEnvelope(parsed.body);
+        if (envelope) return finish(2, '', usageError(envelope));
+
         const rest = commandPositionals(entry, parsed.positionals);
-        const args = buildArgs(entry.tool.inputSchema, parsed, rest, entry.meta.idParam);
+        const built = buildArgs(entry.tool.inputSchema, parsed, rest, entry.meta.idParam);
+        if (built.error) return finish(2, '', usageError(built.error));
+        const args = built.args;
         const bodyApp = extractAppId(parsed.body);
-        const argApp = typeof args.appId === 'string' ? args.appId : undefined;
         if (parsed.app && bodyApp && parsed.app !== bodyApp) {
             return finish(2, '', usageError('--app 与 --body 里的 app id 不一致'));
-        }
-        if (parsed.app && argApp && parsed.app !== argApp) {
-            return finish(2, '', usageError('--app 与参数里的 app id 不一致'));
-        }
-        const declaredApp = parsed.app ?? argApp ?? bodyApp;
-
-        const decision = decideSafety({
-            kind: entry.meta.kind,
-            risk: entry.meta.risk,
-            yes: parsed.yes,
-            confirm: parsed.confirm,
-            appId: declaredApp,
-        });
-        if (decision.action === 'reject') return finish(2, '', usageError(decision.message));
-        if (decision.action === 'dry-run') {
-            const plan = planWrite(entry.meta, { ...args, ...(parsed.file ? { file: parsed.file } : {}) }, parsed.body);
-            if (parsed.body && !includesJson(plan.body, parsed.body) && plan.body !== parsed.body) {
-                plan.body = { ...(typeof plan.body === 'object' && plan.body ? plan.body as object : {}), input: parsed.body };
-            }
-            if (parsed.verbose) verbose.push('dry-run: network writes=0\n');
-            return finish(0, formatData(plan, parsed.format), verbose.join(''));
         }
 
         const schema = asParser(entry.tool.inputSchema);
@@ -112,6 +96,24 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
         }
         const input = checked.data as Record<string, any>;
         if (parsed.limit != null) input.limit = parsed.limit;
+        assertWriteInputs(entry.tool.name, input);
+
+        const risk = effectiveRisk(entry.tool.name, entry.meta.risk, input);
+        const decision = decideSafety({
+            kind: entry.meta.kind,
+            risk,
+            yes: parsed.yes,
+            confirm: parsed.confirm,
+            confirmKind: entry.meta.confirm ?? (risk === 'high' ? 'app' : undefined),
+        });
+        if (decision.action === 'reject') return finish(2, '', usageError(decision.message));
+
+        if (decision.action === 'dry-run' && !writeNeedsRead(entry.tool.name, input)) {
+            const plan = await runWrite(null, entry.tool.name, input, false) as WritePreview;
+            const files = safeFiles(input);
+            if (parsed.verbose) verbose.push('dry-run: network writes=0\n');
+            return finish(0, formatData(files.length ? { ...plan, files } : plan, parsed.format), verbose.join(''));
+        }
 
         const creds = readCredentials(env);
         const client = new AppStoreConnectClient(creds, {
@@ -132,12 +134,35 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
             },
         });
 
+        if (decision.action === 'dry-run') {
+            const previewClient = writeNeedsRead(entry.tool.name, input) ? client : null;
+            const plan = await runWrite(previewClient, entry.tool.name, input, false) as WritePreview;
+            const files = safeFiles(input);
+            if (parsed.verbose) verbose.push('dry-run: network writes=0\n');
+            return finish(0, formatData(files.length ? { ...plan, files } : plan, parsed.format), verbose.join(''));
+        }
+
+        if (risk === 'high') {
+            const gate = await bindConfirm(entry.tool.name, input, parsed.confirm!, (path, params) => client.get(path, params));
+            if (!gate.ok) return finish(2, '', usageError(gate.message));
+        }
+
         const data = await executeTool(entry.tool.name, input, client, { all: parsed.all, limit: parsed.limit });
         const projected = projectFields(applyLimit(data, parsed.limit), parsed.fields);
         return finish(0, formatData(projected, parsed.format), verbose.join(''));
     } catch (error) {
-        if (error instanceof UsageError) return finish(2, '', usageError(error.message));
+        if (error instanceof CliUsage) return finish(2, '', usageError(error.message));
+        if (error instanceof PartialBatch) {
+            return finish(3, formatData(error.payload, 'json'), apiError(0, 'PARTIAL', error.message));
+        }
+        if (error instanceof ExportFailed) {
+            const failed = (error.payload as { failed?: unknown[] }).failed?.length ?? 0;
+            return finish(3, formatData(error.payload, 'json'), apiError(0, 'EXPORT_FAILED', `${failed} 项导出失败`));
+        }
         if (error instanceof AuthMissing) return finish(4, '', authError(error.message));
+        if (error instanceof AscHttpError && error.status === 401 && toolName === 'appstore_validate_credentials') {
+            return finish(4, '', authError('凭据被 App Store Connect 拒绝（HTTP 401）'));
+        }
         if (error instanceof AscHttpError) return finish(3, '', apiError(error.status, error.code, error.detail));
         const message = error instanceof Error ? error.message : String(error);
         return finish(3, '', apiError(0, 'UNKNOWN', message));
@@ -171,36 +196,94 @@ export function readCredentials(env: NodeJS.ProcessEnv) {
     };
 }
 
+function dataEnvelope(body: unknown): string | undefined {
+    if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in (body as object)) {
+        return 'body 不要带 data 信封，请改用字段形式，例如 {"whatsNew":"..."}';
+    }
+    return undefined;
+}
+
+function safeFiles(args: Record<string, unknown>) {
+    try {
+        return describeFiles(args);
+    } catch {
+        return [];
+    }
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function flagName(key: string): string {
+    return key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
+}
+
 function buildArgs(
     schema: unknown,
     parsed: ReturnType<typeof parseArgs>,
     rest: string[],
     idParam?: string
-): Record<string, unknown> {
+): { args: Record<string, unknown>; error?: string } {
     const shape = objectShape(schema) ?? {};
     const args: Record<string, unknown> = {};
-    const assign = (key: string, value: unknown) => {
+    const origin = new Map<string, string>();
+
+    for (const key of Object.keys(parsed.flags)) {
+        if (!(key in shape)) return { args, error: `未知 flag: --${flagName(key)}` };
+    }
+
+    const assign = (key: string, value: unknown, source: string): string | undefined => {
         if (!(key in shape) || value === undefined) return;
-        args[key] = coerce(shape[key]!, value);
+        const coerced = coerce(shape[key]!, value);
+        const previous = origin.get(key);
+        if (previous) {
+            if (!sameValue(args[key], coerced)) return `参数 ${key} 在 ${previous} 与 ${source} 中的值不一致`;
+            return;
+        }
+        origin.set(key, source);
+        args[key] = coerced;
+        return;
     };
 
     const body = parsed.body;
-    if (body && typeof body === 'object' && !Array.isArray(body) && !('data' in (body as object))) {
-        for (const [key, value] of Object.entries(body as Record<string, unknown>)) assign(key, value);
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+        for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+            const error = assign(key, value, '--body');
+            if (error) return { args, error };
+        }
     }
     if (parsed.query && typeof parsed.query === 'object' && !Array.isArray(parsed.query)) {
-        for (const [key, value] of Object.entries(parsed.query as Record<string, unknown>)) assign(key, value);
+        for (const [key, value] of Object.entries(parsed.query as Record<string, unknown>)) {
+            const error = assign(key, value, '--query');
+            if (error) return { args, error };
+        }
     }
-    for (const [key, value] of Object.entries(parsed.flags)) assign(key, value);
-    if (idParam && rest[0]) assign(idParam, rest[0]);
-    if (parsed.app && 'appId' in shape && args.appId === undefined) assign('appId', parsed.app);
-    if (parsed.app && 'adamId' in shape && args.adamId === undefined) assign('adamId', parsed.app);
+    for (const [key, value] of Object.entries(parsed.flags)) {
+        const error = assign(key, value, `--${flagName(key)}`);
+        if (error) return { args, error };
+    }
+    if (idParam && rest[0]) {
+        const error = assign(idParam, rest[0], '位置参数');
+        if (error) return { args, error };
+    }
+    if (parsed.app && 'appId' in shape) {
+        const error = assign('appId', parsed.app, '--app');
+        if (error) return { args, error };
+    }
+    if (parsed.app && 'adamId' in shape) {
+        const error = assign('adamId', parsed.app, '--app');
+        if (error) return { args, error };
+    }
     if (parsed.file && 'imagePaths' in shape) {
-        const current = Array.isArray(args.imagePaths) ? args.imagePaths : [];
-        args.imagePaths = [...current, parsed.file];
+        const current = Array.isArray(args.imagePaths) ? (args.imagePaths as string[]) : [];
+        if (!current.includes(parsed.file)) args.imagePaths = [...current, parsed.file];
     }
-    if (parsed.limit != null && 'limit' in shape) args.limit = parsed.limit;
-    return args;
+    if (parsed.limit != null && 'limit' in shape) {
+        const error = assign('limit', parsed.limit, '--limit');
+        if (error) return { args, error };
+    }
+    return { args };
 }
 
 function coerce(field: z.ZodType, value: unknown): unknown {

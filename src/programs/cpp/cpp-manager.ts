@@ -15,6 +15,37 @@ import {
 // Bypass system proxy for S3 and CDN calls — same fix as the Python upload script
 const s3Client = axios.create({ proxy: false });
 
+export function buildCppCreateBody(appId: string, name: string, promotionalText: string) {
+    return {
+        data: {
+            type: 'appCustomProductPages',
+            attributes: { name },
+            relationships: {
+                app: { data: { type: 'apps', id: appId } },
+                appCustomProductPageVersions: {
+                    data: [{ type: 'appCustomProductPageVersions', id: '${v1}' }],
+                },
+            },
+        },
+        included: [
+            {
+                type: 'appCustomProductPageVersions',
+                id: '${v1}',
+                relationships: {
+                    appCustomProductPageLocalizations: {
+                        data: [{ type: 'appCustomProductPageLocalizations', id: '${loc1}' }],
+                    },
+                },
+            },
+            {
+                type: 'appCustomProductPageLocalizations',
+                id: '${loc1}',
+                attributes: { locale: 'en-US', promotionalText },
+            },
+        ],
+    };
+}
+
 function md5File(path: string): string {
     const data = readFileSync(path);
     return createHash('md5').update(data).digest('hex');
@@ -75,35 +106,7 @@ export class CppManager {
             throw new Error(`promotionalText exceeds 170 chars (${promotionalText.length})`);
         }
 
-        // 1. Atomic creation: CPP + version + locale in a single POST
-        const createBody = {
-            data: {
-                type: 'appCustomProductPages',
-                attributes: { name },
-                relationships: {
-                    app: { data: { type: 'apps', id: this.appId } },
-                    appCustomProductPageVersions: {
-                        data: [{ type: 'appCustomProductPageVersions', id: '${v1}' }],
-                    },
-                },
-            },
-            included: [
-                {
-                    type: 'appCustomProductPageVersions',
-                    id: '${v1}',
-                    relationships: {
-                        appCustomProductPageLocalizations: {
-                            data: [{ type: 'appCustomProductPageLocalizations', id: '${loc1}' }],
-                        },
-                    },
-                },
-                {
-                    type: 'appCustomProductPageLocalizations',
-                    id: '${loc1}',
-                    attributes: { locale: 'en-US', promotionalText },
-                },
-            ],
-        };
+        const createBody = buildCppCreateBody(this.appId, name, promotionalText);
 
         const createResp = await this.client.post<{ data: { id: string }; included: { type: string; id: string }[] }>(
             '/appCustomProductPages',

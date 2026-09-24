@@ -90,10 +90,21 @@ export class TestFlightManager {
         await this.client.post('/betaTesters', data);
     }
 
-    public async listBetaLocalizations(appId: string): Promise<BetaAppLocalization[]> {
-        const response = await this.client.get<BetaAppLocalizationsResponse>(
-            `/apps/${appId}/betaAppLocalizations`
-        );
+    public async listBetaLocalizations(
+        appId: string,
+        options?: { all?: boolean; limit?: number }
+    ): Promise<BetaAppLocalization[]> {
+        const path = `/apps/${appId}/betaAppLocalizations`;
+        if (options?.all || (options?.limit ?? 0) > 200) {
+            return this.client.getAllPages(path, {}, { limit: options?.limit });
+        }
+        if (options?.limit) {
+            const response = await this.client.get<BetaAppLocalizationsResponse>(path, {
+                limit: Math.min(options.limit, 200),
+            });
+            return response.data.slice(0, options.limit);
+        }
+        const response = await this.client.get<BetaAppLocalizationsResponse>(path);
         return response.data;
     }
 

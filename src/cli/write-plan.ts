@@ -95,7 +95,7 @@ function fillPath(template: string, args: Record<string, unknown>): string {
     return template.replace(/\{([^}]+)\}/g, (_, key: string) => encodeURIComponent(String(args[key] ?? '')));
 }
 
-function describeFiles(args: Record<string, unknown>) {
+export function describeFiles(args: Record<string, unknown>) {
     const paths: string[] = [];
     for (const key of ['file', 'cppImagePath']) {
         if (typeof args[key] === 'string') paths.push(args[key] as string);
