@@ -23,13 +23,27 @@ function spawnOpencli(args: string[]): string {
     return result.stdout;
 }
 
+function parseOpencliJson(raw: string): unknown {
+    // Newer opencli pretty-prints JSON across multiple lines; parse the whole
+    // trimmed output first, falling back to extracting the first {...} block
+    // for older/mixed output that may still include stray banner lines.
+    const trimmed = raw.trim();
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        const start = trimmed.indexOf('{');
+        const end = trimmed.lastIndexOf('}');
+        if (start === -1 || end === -1 || end < start) {
+            throw new Error(`Unexpected opencli output (no JSON object found): ${raw}`);
+        }
+        return JSON.parse(trimmed.slice(start, end + 1));
+    }
+}
+
 function openAscTab(adamId: string): string {
     const url = `${ASC_BASE}/apps/${adamId}/analytics/acquisition/sources`;
     const raw = spawnOpencli(['browser', BROWSER_SESSION, 'open', url]);
-    // strip warning/node lines; find the JSON line with page id
-    const jsonLine = raw.split('\n').find((l) => l.trim().startsWith('{'));
-    if (!jsonLine) throw new Error(`Unexpected opencli browser open output: ${raw}`);
-    return (JSON.parse(jsonLine) as { page: string }).page;
+    return (parseOpencliJson(raw) as { page: string }).page;
 }
 
 function fetchTimeseriesForSource(
@@ -53,14 +67,10 @@ function fetchTimeseriesForSource(
     const js = `(async()=>{const r=await fetch(${JSON.stringify(ANALYTICS_API)},{method:'POST',credentials:'include',headers:{'Content-Type':'application/json','X-Requested-By':'appstoreconnect.apple.com'},body:JSON.stringify(${JSON.stringify(payload)})});return JSON.stringify(await r.json())})()`;
 
     const raw = spawnOpencli(['browser', BROWSER_SESSION, 'eval', '--tab', tabId, js]);
-    // opencli eval returns JSON-encoded result; unwrap one level if needed
-    let parsed: string;
-    try {
-        parsed = JSON.parse(raw.trim());
-    } catch {
-        parsed = raw.trim();
-    }
-    const apiResponse = JSON.parse(parsed);
+    // opencli eval prints the JS expression's string return value as-is
+    // (the JS itself already does JSON.stringify(...)), so this is a single
+    // JSON object literal — parse it once, no double-unwrap needed.
+    const apiResponse = parseOpencliJson(raw) as { results?: unknown[] };
 
     // Build: { measure -> { date -> value } }
     const result: Record<string, Record<string, number>> = {};
