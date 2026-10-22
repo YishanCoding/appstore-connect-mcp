@@ -1,6 +1,7 @@
 export interface AppStoreCredentials {
     keyId: string;
-    issuerId: string;
+    /** 团队 Key 的 Issuer ID；留空即个人 Key（Individual API Key） */
+    issuerId?: string;
     privateKey: string;
 }
 

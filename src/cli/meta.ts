@@ -301,7 +301,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
         risk: 'high',
         reason: 'stateless',
         capability: 'store-credentials',
-        owner: 'env APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID / APP_STORE_CONNECT_PRIVATE_KEY_PATH',
+        owner: 'env APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID（个人 Key 不设）/ APP_STORE_CONNECT_PRIVATE_KEY_PATH',
     },
 };
 

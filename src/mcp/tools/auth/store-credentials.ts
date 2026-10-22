@@ -5,7 +5,7 @@ import { JWTGenerator } from '../../../programs/index.js';
 
 const inputSchema = z.object({
     keyId: z.string().describe('App Store Connect API Key ID'),
-    issuerId: z.string().describe('App Store Connect Issuer ID (Team ID)'),
+    issuerId: z.string().optional().describe('App Store Connect Issuer ID (Team ID); omit for an Individual API Key'),
     privateKey: z.string().describe('P8 private key content (include BEGIN/END markers)'),
 });
 
@@ -16,7 +16,7 @@ function loadEnvCredentials(): z.infer<typeof inputSchema> | null {
     const privateKeyPath = process.env.APP_STORE_CONNECT_PRIVATE_KEY_PATH;
     const privateKeyInline = process.env.APP_STORE_CONNECT_PRIVATE_KEY;
 
-    if (!keyId || !issuerId) return null;
+    if (!keyId) return null;
 
     let privateKey: string | undefined;
     if (privateKeyPath) {
@@ -32,7 +32,7 @@ function loadEnvCredentials(): z.infer<typeof inputSchema> | null {
     }
 
     if (!privateKey) return null;
-    return { keyId, issuerId, privateKey };
+    return { keyId, issuerId: issuerId || undefined, privateKey };
 }
 
 let storedCredentials: z.infer<typeof inputSchema> | null = loadEnvCredentials();

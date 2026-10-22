@@ -40,7 +40,7 @@ A Model Context Protocol (MCP) server for interacting with Apple's App Store Con
 - Node.js 18.0.0 or higher
 - App Store Connect API credentials:
   - API Key ID
-  - Issuer ID (Team ID)
+  - Issuer ID (Team ID) — only for team keys; omit it when using an Individual API Key
   - Private Key (.p8 file)
 
 ## Installation
@@ -65,6 +65,14 @@ claude mcp add appstore-connect-mcp -- npx appstore-connect-mcp
    - Create a new key with desired permissions
    - Download the .p8 private key file
    - Note your Key ID and Issuer ID
+
+   Individual API Key: an admin enables "Generate Individual API Keys" for your user, then you open your profile → Individual API Key → Generate. Download the .p8 and note the Key ID. Leave `APP_STORE_CONNECT_ISSUER_ID` unset — the JWT is then signed with `sub: "user"` instead of `iss`. The key has the same permissions as your account.
+
+   ```bash
+   export APP_STORE_CONNECT_KEY_ID=XXXXXXXXXX
+   export APP_STORE_CONNECT_PRIVATE_KEY_PATH=/path/to/AuthKey_XXXXXXXXXX.p8
+   ascli auth check
+   ```
 
 2. Configure the MCP server in Claude Desktop:
    ```bash

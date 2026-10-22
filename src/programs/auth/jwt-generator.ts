@@ -16,7 +16,7 @@ export class JWTGenerator {
     private static cache = new Map<string, CachedToken>();
 
     public static generateToken(config: AuthConfig): string {
-        const cacheKey = `${config.keyId}:${config.issuerId}`;
+        const cacheKey = `${config.keyId}:${config.issuerId || 'user'}`;
         const now = Math.floor(Date.now() / 1000);
         const cached = JWTGenerator.cache.get(cacheKey);
 
@@ -28,7 +28,7 @@ export class JWTGenerator {
         const exp = now + expirationMinutes * 60;
 
         const payload: JWTPayload = {
-            iss: config.issuerId,
+            ...(config.issuerId ? { iss: config.issuerId } : { sub: 'user' as const }),
             iat: now,
             exp,
             aud: this.AUDIENCE,

@@ -183,7 +183,7 @@ class AuthMissing extends Error {}
 export function readCredentials(env: NodeJS.ProcessEnv) {
     const missing: string[] = [];
     if (!env.APP_STORE_CONNECT_KEY_ID) missing.push('APP_STORE_CONNECT_KEY_ID');
-    if (!env.APP_STORE_CONNECT_ISSUER_ID) missing.push('APP_STORE_CONNECT_ISSUER_ID');
+    // 不设 APP_STORE_CONNECT_ISSUER_ID 即按个人 Key（Individual API Key）签 JWT
     const inline = env.APP_STORE_CONNECT_PRIVATE_KEY;
     const file = env.APP_STORE_CONNECT_PRIVATE_KEY_PATH;
     if (!inline && !file) missing.push('APP_STORE_CONNECT_PRIVATE_KEY_PATH');
@@ -200,7 +200,7 @@ export function readCredentials(env: NodeJS.ProcessEnv) {
     if (!privateKey.trim()) throw new AuthMissing('缺 APP_STORE_CONNECT_PRIVATE_KEY');
     return {
         keyId: env.APP_STORE_CONNECT_KEY_ID!,
-        issuerId: env.APP_STORE_CONNECT_ISSUER_ID!,
+        issuerId: env.APP_STORE_CONNECT_ISSUER_ID || undefined,
         privateKey,
     };
 }

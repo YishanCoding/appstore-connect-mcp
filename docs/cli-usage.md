@@ -1,6 +1,6 @@
 # ascli 用法
 
-`ascli` 是 App Store Connect 的一次性命令行入口，和 MCP 共用同一批工具定义。凭据只读环境变量：`APP_STORE_CONNECT_KEY_ID`、`APP_STORE_CONNECT_ISSUER_ID`、`APP_STORE_CONNECT_PRIVATE_KEY_PATH`（或 `APP_STORE_CONNECT_PRIVATE_KEY`）。
+`ascli` 是 App Store Connect 的一次性命令行入口，和 MCP 共用同一批工具定义。凭据只读环境变量：`APP_STORE_CONNECT_KEY_ID`、`APP_STORE_CONNECT_ISSUER_ID`、`APP_STORE_CONNECT_PRIVATE_KEY_PATH`（或 `APP_STORE_CONNECT_PRIVATE_KEY`）。用个人 Key（Individual API Key）时不设 `APP_STORE_CONNECT_ISSUER_ID`，JWT 自动改用 `sub: "user"`。
 
 安装：
 

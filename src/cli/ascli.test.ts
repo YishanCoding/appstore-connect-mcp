@@ -1306,3 +1306,32 @@ describe('round 4 review ownership, uploads, paging, mock, and 401', () => {
         expect(spec).not.toContain('`upload_screenshots` / `create_cpp` 在删除或上传前检查本地文件');
     });
 });
+
+describe('individual API key', () => {
+    const { generateKeyPairSync } = require('crypto') as typeof import('crypto');
+    const pem = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+        .privateKey.export({ type: 'pkcs8', format: 'pem' })
+        .toString();
+    const decode = (token: string) => JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString());
+
+    test('without issuerId the JWT uses sub=user and no iss', async () => {
+        const { JWTGenerator } = await import('../programs/auth/jwt-generator.js');
+        const payload = decode(JWTGenerator.generateToken({ keyId: 'INDIVKEY01', privateKey: pem }));
+        expect(payload.sub).toBe('user');
+        expect(payload.iss).toBeUndefined();
+        expect(payload.aud).toBe('appstoreconnect-v1');
+    });
+
+    test('with issuerId the JWT keeps iss and has no sub', async () => {
+        const { JWTGenerator } = await import('../programs/auth/jwt-generator.js');
+        const payload = decode(JWTGenerator.generateToken({ keyId: 'TEAMKEY01', issuerId: 'ISS', privateKey: pem }));
+        expect(payload.iss).toBe('ISS');
+        expect(payload.sub).toBeUndefined();
+    });
+
+    test('readCredentials accepts a missing ISSUER_ID', async () => {
+        const { readCredentials } = await import('./run.js');
+        const creds = readCredentials({ APP_STORE_CONNECT_KEY_ID: 'K', APP_STORE_CONNECT_PRIVATE_KEY: 'p' });
+        expect(creds.issuerId).toBeUndefined();
+    });
+});
