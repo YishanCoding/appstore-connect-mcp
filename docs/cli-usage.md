@@ -27,6 +27,7 @@ ascli app-info-localization update <id> --name 'New Name'
 ascli screenshot-set list --app-store-version-localization-id <id>
 ascli screenshot upload --app-store-version-localization-id <id> --placement-group IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE --image-paths '["/path/shot.png"]'
 ascli cpp list --app <app-id>
+ascli cpp create --app-id <app-id> --name 'Campaign' --promotional-text 'Text' --cpp-image-path /path/hero.png --template-shot-paths '["/path/extra.png"]'
 ascli event list --app <app-id>
 ascli event submit <event-id> --yes --confirm <app-id>
 ascli user list --limit 50
@@ -62,11 +63,19 @@ ascli asset-library delete-image <image-id>
 
 # 便捷命令按文件顺序上传、放置、排序；默认保留该 group 现有截图。
 ascli screenshot upload --app-store-version-localization-id <localization-id> --placement-group <group> --image-paths '["/path/1.png","/path/2.png"]'
+ascli screenshot upload --app-custom-product-page-localization-id <cpp-localization-id> --placement-group <group> --image-paths '["/path/new.png"]'
+
+# 新建 CPP：默认使用 App Asset Library，默认 group 为 IPHONE_FACE_ID_LARGE_PROFILE。
+ascli cpp create --app-id <app-id> --name 'Campaign' --promotional-text 'Text' --cpp-image-path /path/hero.png --template-shot-paths '["/path/extra.png"]' --placement-group IPHONE_FACE_ID_LARGE_PROFILE
 ```
 
 `asset-library upload-image` 经 reserve → 分片 PUT → `uploaded: true` commit → 轮询，输出 image id、state 和 specId。`placement create` 在写前用最新 reference data 校验 group、规格和 category；非法 group 会列出合法值。`placement order` 只接受同一目标本地化与 group 的 placement ID，属于高风险操作，执行时需 `--yes --confirm <app-id>`。`placement delete`、`asset-library delete-image` 同样需要该确认；删除图片前会检查是否仍有 placement。
 
 `screenshot upload --replace-existing true` 会先处理新图片，再移除该 group 的旧 placement，随后放置并排序新截图；执行时需 `--yes --confirm <app-id>`。不带该 flag 时，旧 placement 保留，新截图排在后面。预览视频只读；本命令不上传视频。旧截图集仅通过 `screenshot upload --legacy --screenshot-display-type <old-type>` 使用；`screenshot-set list/delete` 仍可调用，但都会输出 deprecated 提示。
+
+`cpp create` 在创建前读取 Apple reference data，校验 group 与 `CUSTOM_PRODUCT_PAGES` 的每组截图上限，再上传图片、创建 CPP 本地化 placement 并排序。默认 group 对应旧 `APP_IPHONE_65`；可用 `--placement-group` 选择其他合法 group。输出包含 `uploaded` 和 `createdPlacementIds`。`cpp create --legacy` 才走已弃用的截图集流程，输出仍包含 `screenshotSetId`。已有 CPP 可用上面的 `screenshot upload --app-custom-product-page-localization-id` 追加；替换旧截图用 `--replace-existing true --yes --confirm <app-id>`，会删除该 group 的旧 placement。
+
+`user invite` 和 `user update-roles` 不再接受 `ACCESS_TO_REPORTS`。Apple 已弃用此附加权限；按实际报表需要选择 `FINANCE`（财务报表）或 `SALES`（销售与分析），两者均不是一对一替代。
 
 接口依据：[Apple 迁移说明](https://developer.apple.com/documentation/appstoreconnectapi/migrating-to-the-app-asset-library)、[参考数据](https://developer.apple.com/documentation/appstoreconnectapi/discovering-asset-specifications)、[放置与排序](https://developer.apple.com/documentation/appstoreconnectapi/placing-assets-on-your-app-store-surfaces)。
 

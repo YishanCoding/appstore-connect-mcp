@@ -61,6 +61,16 @@ export function validateGroup(reference: any, placementType: string, placementGr
     }
 }
 
+export function screenshotLimit(reference: any, featureId: string, placementGroup: string): number {
+    const feature = (reference.features ?? []).find((item: any) => item.featureId === featureId);
+    const policy = feature?.placementPolicies?.find((item: any) => item.placementType === 'APP_SCREENSHOT');
+    const maxCount = policy?.groupLimits?.find((item: any) => item.groupIds?.includes(placementGroup))?.maxCount;
+    if (!Number.isInteger(maxCount) || maxCount < 1) {
+        throw new Error(`reference data 未提供 ${featureId}/${placementGroup} 的 APP_SCREENSHOT 上限`);
+    }
+    return maxCount;
+}
+
 export async function uploadImage(client: AppStoreConnectClient, libraryId: string, file: string,
     category = 'APP_SCREENSHOTS_AND_PREVIEWS', sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))) {
     const reserved = await client.post<any>('/appAssetLibraryImages', reserveImageBody(libraryId, file, category));

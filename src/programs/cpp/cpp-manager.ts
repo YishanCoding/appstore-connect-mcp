@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { createHash } from 'crypto';
-import { readFileSync, statSync } from 'fs';
+import { accessSync, constants, readFileSync, statSync } from 'fs';
 import { basename } from 'path';
 import { AppStoreConnectClient } from '../api-client/index.js';
+import { getReference, libraryIdForApp, orderBody, placementBody, screenshotLimit, uploadImage, validateGroup } from '../assets/library.js';
 import {
     CppInfo,
     CppLocaleInfo,
@@ -14,6 +15,8 @@ import {
 
 // Bypass system proxy for S3 and CDN calls — same fix as the Python upload script
 const s3Client = axios.create({ proxy: false });
+
+export class CppPreflightError extends Error {}
 
 export function buildCppCreateBody(appId: string, name: string, promotionalText: string) {
     return {
@@ -100,12 +103,38 @@ export class CppManager {
         name: string,
         promotionalText: string,
         cppImagePath: string,
-        templateShotPaths: string[]
+        templateShotPaths: string[],
+        placementGroup = 'IPHONE_FACE_ID_LARGE_PROFILE',
+        legacy = false
     ): Promise<CreateCppResult> {
         if (promotionalText.length > 170) {
             throw new Error(`promotionalText exceeds 170 chars (${promotionalText.length})`);
         }
 
+        const allShots = [cppImagePath, ...templateShotPaths];
+        for (const file of allShots) {
+            try {
+                const stat = statSync(file);
+                if (!stat.isFile() || stat.size === 0) throw new Error('不是非空普通文件');
+                accessSync(file, constants.R_OK);
+            } catch {
+                throw new CppPreflightError(`截图文件不存在、不可读、不是普通文件或为空: ${file}`);
+            }
+        }
+        // Preflight the full batch before creating a CPP: a failed check must not leave one behind.
+        let libraryId: string | undefined;
+        let reference: any;
+        if (!legacy) {
+            reference = await getReference(this.client);
+            try {
+                validateGroup(reference, 'APP_SCREENSHOT', placementGroup);
+                const maxCount = screenshotLimit(reference, 'CUSTOM_PRODUCT_PAGES', placementGroup);
+                if (allShots.length > maxCount) throw new Error(`该 group 最多 ${maxCount} 张 CPP 截图；本次 ${allShots.length} 张`);
+            } catch (error) {
+                throw new CppPreflightError(error instanceof Error ? error.message : String(error));
+            }
+            libraryId = await libraryIdForApp(this.client, this.appId);
+        }
         const createBody = buildCppCreateBody(this.appId, name, promotionalText);
 
         const createResp = await this.client.post<{ data: { id: string }; included: { type: string; id: string }[] }>(
@@ -118,7 +147,25 @@ export class CppManager {
             (x) => x.type === 'appCustomProductPageLocalizations'
         )!.id;
 
-        // 2. Create screenshot set for iPhone 6.5"
+        if (!legacy) {
+            const target = { appCustomProductPageLocalizationId: localeId };
+            const uploaded: { id: string; state: string; specId: string }[] = [];
+            for (const file of allShots) {
+                const image = await uploadImage(this.client, libraryId!, file);
+                validateGroup(reference, 'APP_SCREENSHOT', placementGroup, image.specId);
+                uploaded.push({ id: image.id, state: image.state, specId: image.specId });
+            }
+            const createdPlacementIds: string[] = [];
+            for (const image of uploaded) {
+                const placed = await this.client.post<{ data: { id: string } }>('/appAssetLibraryPlacements', placementBody(image.id, target, 'APP_SCREENSHOT', placementGroup));
+                createdPlacementIds.push(placed.data.id);
+            }
+            await this.client.post('/appAssetLibraryPlacementOrderingRequests', orderBody(createdPlacementIds, target, placementGroup));
+            return { cppId, localeId, screenshotsUploaded: uploaded.length, uploaded, createdPlacementIds,
+                url: `https://apps.apple.com/us/app/id${this.appId}?ppid=${cppId}` };
+        }
+
+        // Deprecated screenshot-set flow, only when explicitly requested.
         const setResp = await this.client.post<{ data: { id: string } }>(
             '/appScreenshotSets',
             {
@@ -136,7 +183,6 @@ export class CppManager {
         const screenshotSetId = setResp.data.id;
 
         // 3. Upload CPP image as #1, then template shots as #2-8
-        const allShots = [cppImagePath, ...templateShotPaths];
         let uploaded = 0;
 
         for (const shotPath of allShots) {

@@ -151,26 +151,30 @@ export function registerScreenshotTools(server: McpServer) {
     server.registerTool(
         'appstore_upload_screenshots',
         {
-            description: 'Upload ordered screenshots through App Asset Library by default. Use --legacy for deprecated screenshot sets.',
+            description: 'Upload ordered screenshots to a version or CPP localization through App Asset Library. Use --legacy only for version screenshot sets.',
             inputSchema: z.object({
-                appStoreVersionLocalizationId: z.string().describe('Version localization ID (from appstore_list_version_localizations)'),
+                appStoreVersionLocalizationId: z.string().optional().describe('Version localization ID'),
+                appCustomProductPageLocalizationId: z.string().optional().describe('CPP localization ID; unavailable with --legacy'),
                 appId: z.string().optional().describe('App ID; required for Asset Library uploads'),
                 placementGroup: z.string().optional().describe('Runtime placement group from asset-library reference'),
                 screenshotDisplayType: z.string().optional().describe('Deprecated display type, accepted only with --legacy'),
                 imagePaths: z.array(z.string()).min(1).describe('Ordered list of local file paths to upload'),
                 replaceExisting: z.boolean().optional().describe('Replace existing placements in this group; legacy defaults to true (high risk)'),
                 legacy: z.boolean().optional().default(false).describe('Use deprecated screenshot-set API'),
-            }),
+            }).refine((value) => !!value.appStoreVersionLocalizationId !== !!value.appCustomProductPageLocalizationId,
+                '指定一个版本或 CPP 本地化 ID').refine((value) => !value.legacy || !!value.appStoreVersionLocalizationId,
+                '--legacy 仅支持版本本地化'),
         },
-        async ({ appStoreVersionLocalizationId, screenshotDisplayType, imagePaths, replaceExisting, appId, placementGroup, legacy }) => {
+        async ({ appStoreVersionLocalizationId, appCustomProductPageLocalizationId, screenshotDisplayType, imagePaths, replaceExisting, appId, placementGroup, legacy }) => {
             const client = makeClient();
             if (!client) return noCredentials();
             try {
                 if (!legacy) {
                     const { runWrite } = await import('../../../cli/write-call.js');
-                    const result = await runWrite(client, 'appstore_upload_screenshots', { appStoreVersionLocalizationId, imagePaths, replaceExisting, appId, placementGroup, legacy }, true);
+                    const result = await runWrite(client, 'appstore_upload_screenshots', { appStoreVersionLocalizationId, appCustomProductPageLocalizationId, imagePaths, replaceExisting, appId, placementGroup, legacy }, true);
                     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
                 }
+                if (!appStoreVersionLocalizationId) throw new Error('--legacy 仅支持版本本地化');
                 if (!screenshotDisplayType) throw new Error('--legacy 需要 screenshotDisplayType');
                 assertReadableFiles(imagePaths);
                 // Step 1: Optionally delete existing sets of this displayType

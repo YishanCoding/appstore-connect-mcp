@@ -11,11 +11,117 @@ const group = 'IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE';
 const reference = { placementProfileGroups: [{ placementProfileGroupId: group }], placementTypes: [{
     placementTypeId: 'APP_SCREENSHOT', acceptsAssetCategories: ['APP_SCREENSHOTS_AND_PREVIEWS'],
     specMappings: [{ placementGroupId: group, specs: ['spec-1'] }],
-}], imageSpecs: [{ specId: 'spec-1', dimensions: { minWidth: 1290, minHeight: 2796 } }] };
+}], imageSpecs: [{ specId: 'spec-1', dimensions: { minWidth: 1290, minHeight: 2796 } }],
+features: [{ featureId: 'APP_STORE_VERSIONS', placementPolicies: [{ placementType: 'APP_SCREENSHOT', groupLimits: [{ groupIds: [group], maxCount: 10 }] }] },
+    { featureId: 'CUSTOM_PRODUCT_PAGES', placementPolicies: [{ placementType: 'APP_SCREENSHOT', groupLimits: [{ groupIds: [group], maxCount: 10 }] }] }] };
 
 function ok(data: unknown, status = 200): HttpResult { return { status, headers: {}, data: { data } }; }
 
 describe('App Asset Library 4.5.1', () => {
+    test('CPP create preflights reference data, then uploads, places and orders screenshots', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'cpp-library-'));
+        const files = [join(dir, 'hero.png'), join(dir, 'extra.png')];
+        files.forEach((file, index) => writeFileSync(file, `image-${index}`));
+        const command = ['cpp', 'create', '--app-id', 'APP', '--name', 'Hero', '--promotional-text', 'hello',
+            '--cpp-image-path', files[0]!, '--template-shot-paths', JSON.stringify([files[1]]), '--placement-group', group];
+        const dry = await runCli(command, { env, transport: { async send() { throw new Error('dry-run sent a request'); } } });
+        expect(dry.code).toBe(0);
+        expect(dry.calls).toEqual([]);
+        const plan = JSON.parse(dry.stdout);
+        expect(plan.steps.map((step: any) => step.path)).not.toContain('/appScreenshotSets');
+        expect(plan.steps.map((step: any) => step.path)).toContain('/appAssetLibraryPlacementOrderingRequests');
+        const defaultPlan = JSON.parse((await runCli(command.slice(0, -2), { env })).stdout);
+        expect(defaultPlan.steps.find((step: any) => step.path === '/appAssetLibraryPlacements').body.data.attributes.placementGroup).toBe('IPHONE_FACE_ID_LARGE_PROFILE');
+        for (const step of plan.steps) {
+            if (step.path.startsWith('{uploadOperations')) continue;
+            expect(matchSpec(step.path.replace(/\{[^/}]+\}/g, 'example'))).toBeTruthy();
+        }
+
+        const sink = await startUploadSink();
+        const calls: HttpCall[] = [];
+        let image = 0;
+        let placement = 0;
+        const transport = { async send(call: HttpCall): Promise<HttpResult> {
+            calls.push(call);
+            const invalid = specViolation(call);
+            if (invalid) return invalid;
+            if (call.url === '/appAssetLibraryRefData') return ok([{ id: 'ref', attributes: reference }]);
+            if (call.url === '/apps/APP/assetLibrary') return ok({ id: 'LIB' });
+            if (call.url === '/appCustomProductPages') return { status: 201, headers: {}, data: { data: { id: 'CPP' }, included: [{ type: 'appCustomProductPageLocalizations', id: 'LOC' }] } };
+            if (call.url === '/appAssetLibraryImages' && call.method === 'POST') return ok({ id: `IMAGE-${++image}`, attributes: { uploadOperations: [{ method: 'PUT', url: `${sink.url}/${image}` }] } }, 201);
+            if (/^\/appAssetLibraryImages\/IMAGE-\d+$/.test(call.url) && call.method === 'PATCH') return ok({ id: call.url.split('/').at(-1) });
+            if (/^\/appAssetLibraryImages\/IMAGE-\d+$/.test(call.url) && call.method === 'GET') return ok({ id: call.url.split('/').at(-1), attributes: { state: 'PREPARE_FOR_SUBMISSION', specId: 'spec-1' } });
+            if (call.url === '/appAssetLibraryPlacements') return ok({ id: `P-${++placement}` }, 201);
+            if (call.url === '/appAssetLibraryPlacementOrderingRequests') return ok({ id: 'ORDER' }, 201);
+            throw new Error(`unexpected ${call.method} ${call.url}`);
+        } };
+        try {
+            const result = await runCli([...command, '--yes'], { env, transport });
+            expect(result.code).toBe(0);
+            const data = JSON.parse(result.stdout);
+            expect(data.createdPlacementIds).toEqual(['P-1', 'P-2']);
+            expect(data.uploaded.map((item: any) => item.id)).toEqual(['IMAGE-1', 'IMAGE-2']);
+            expect(data.screenshotSetId).toBeUndefined();
+            expect(sink.puts.map((item) => item.body)).toEqual(['image-0', 'image-1']);
+            expect(calls.findIndex((call) => call.url === '/appAssetLibraryRefData')).toBeLessThan(calls.findIndex((call) => call.url === '/appCustomProductPages'));
+            const order = calls.find((call) => call.url === '/appAssetLibraryPlacementOrderingRequests')!;
+            expect((order.data as any).data.relationships.orderedPlacements.data.map((item: any) => item.id)).toEqual(['P-1', 'P-2']);
+        } finally { await sink.stop(); }
+
+        const bad = await runCli([...command.slice(0, -2), '--placement-group', 'FOO', '--yes'], { env, transport });
+        expect(bad.code).toBe(2);
+        expect(bad.stderr).toContain(group);
+        expect(bad.calls.some((call) => call.method === 'POST')).toBe(false);
+        const limited = await runCli([...command, '--yes'], { env, transport: { async send(call) {
+            if (call.url === '/appAssetLibraryRefData') return ok([{ id: 'ref', attributes: {
+                ...reference, features: [{ featureId: 'CUSTOM_PRODUCT_PAGES', placementPolicies: [
+                    { placementType: 'APP_SCREENSHOT', groupLimits: [{ groupIds: [group], maxCount: 1 }] },
+                ] }],
+            } }]);
+            throw new Error(`preflight should not call ${call.method} ${call.url}`);
+        } } });
+        expect(limited.code).toBe(2);
+        expect(limited.stderr).toContain('最多 1 张');
+        expect(limited.calls.every((call) => call.method === 'GET')).toBe(true);
+    });
+
+    test('CPP screenshot upload targets its localization and binds ownership before replacement', async () => {
+        const file = join(mkdtempSync(join(tmpdir(), 'cpp-append-')), 'shot.png');
+        writeFileSync(file, 'shot');
+        const dry = await runCli(['screenshot', 'upload', '--app-custom-product-page-localization-id', 'LOC',
+            '--placement-group', group, '--file', file, '--replace-existing', 'true'], { env });
+        expect(dry.code).toBe(0);
+        const plan = JSON.parse(dry.stdout);
+        expect(plan.confirm_reads.map((step: any) => step.path)).toContain('/appCustomProductPageLocalizations/LOC');
+        expect(plan.steps.find((step: any) => step.path === '/appAssetLibraryPlacements').body.data.relationships.appCustomProductPageLocalization.data.id).toBe('LOC');
+        const calls: HttpCall[] = [];
+        const result = await runCli(['screenshot', 'upload', '--app-custom-product-page-localization-id', 'LOC',
+            '--placement-group', group, '--file', file, '--replace-existing', 'true', '--yes', '--confirm', 'OTHER'], {
+            env, transport: { async send(call) {
+                calls.push(call);
+                if (call.url === '/appCustomProductPageLocalizations/LOC') return ok({ id: 'LOC', relationships: { appCustomProductPageVersion: { data: { id: 'V' } } } });
+                if (call.url === '/appCustomProductPageVersions/V') return ok({ id: 'V', relationships: { appCustomProductPage: { data: { id: 'CPP' } } } });
+                if (call.url === '/appCustomProductPages/CPP') return ok({ id: 'CPP', relationships: { app: { data: { id: 'APP' } } } });
+                throw new Error(`unexpected ${call.method} ${call.url}`);
+            } } });
+        expect(result.code).toBe(2);
+        expect(calls.every((call) => call.method === 'GET')).toBe(true);
+    });
+
+    test('deprecated report permission is rejected before invite or role update', async () => {
+        for (const command of [
+            ['user', 'invite', '--email', 'a@example.com', '--first-name', 'A', '--last-name', 'B'],
+            ['user', 'update-roles', 'USER'],
+        ]) {
+            const result = await runCli([...command, '--roles', '["ACCESS_TO_REPORTS"]', '--yes', '--confirm', 'a@example.com'], { env });
+            expect(result.code).toBe(2);
+            expect(result.stderr).toContain('ACCESS_TO_REPORTS 已被 Apple 弃用');
+            expect(result.stderr).toContain('FINANCE');
+            expect(result.stderr).toContain('SALES');
+            expect(result.calls).toEqual([]);
+        }
+    });
+
     test('every new write dry-run uses OpenAPI paths and exact JSON:API bodies without network', async () => {
         const file = join(mkdtempSync(join(tmpdir(), 'asset-plan-')), 'shot.png');
         writeFileSync(file, 'png');

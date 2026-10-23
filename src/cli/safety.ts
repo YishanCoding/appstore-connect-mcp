@@ -106,6 +106,11 @@ export function bindingReads(toolName: string, args: Record<string, unknown>, ct
         return [{ method: 'GET', path: `/appStoreVersions/${version}`, params: { include: 'app,appStoreVersionPhasedRelease' } }];
     }
     if (toolName === 'appstore_upload_screenshots') {
+        if (args.appCustomProductPageLocalizationId) return [
+            { method: 'GET', path: `/appCustomProductPageLocalizations/${id(args.appCustomProductPageLocalizationId)}`, params: { include: 'appCustomProductPageVersion' } },
+            { method: 'GET', path: '/appCustomProductPageVersions/{cppVersionId}', params: { include: 'appCustomProductPage' } },
+            { method: 'GET', path: '/appCustomProductPages/{cppId}', params: { include: 'app' } },
+        ];
         return [
             { method: 'GET', path: `/appStoreVersionLocalizations/${id(args.appStoreVersionLocalizationId)}`, params: { include: 'appStoreVersion' } },
             { method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', params: { include: 'app' } },
@@ -268,8 +273,10 @@ export async function bindConfirm(
 
     if (toolName === 'appstore_upload_screenshots') {
         return matchApp(
-            await versionLocalizationApp(String(args.appStoreVersionLocalizationId ?? '')),
-            'appStoreVersionLocalizations?include=appStoreVersion → appStoreVersions?include=app'
+            args.appCustomProductPageLocalizationId
+                ? await cppLocalizationApp(String(args.appCustomProductPageLocalizationId))
+                : await versionLocalizationApp(String(args.appStoreVersionLocalizationId ?? '')),
+            '截图本地化关系链'
         );
     }
 

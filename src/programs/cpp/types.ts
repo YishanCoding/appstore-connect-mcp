@@ -31,8 +31,10 @@ export interface ScreenshotReserveResponse {
 export interface CreateCppResult {
     cppId: string;
     localeId: string;
-    screenshotSetId: string;
+    screenshotSetId?: string;
     screenshotsUploaded: number;
+    uploaded?: { id: string; state: string; specId: string }[];
+    createdPlacementIds?: string[];
     url: string;
 }
 
