@@ -9,8 +9,9 @@ import { ReviewManager } from '../programs/reviews/review-manager.js';
 import { assertReadableFiles, uploadScreenshot } from '../mcp/tools/versions/screenshots.js';
 import { projectFields } from './output.js';
 import { runCli } from './run.js';
+import { TOOL_META } from './meta.js';
 import { decideSafety } from './safety.js';
-import { appleTransport, startUploadSink } from './test-support/apple-spec-mock.js';
+import { appleTransport, specViolation, startUploadSink, type AppleWorld } from './test-support/apple-spec-mock.js';
 
 const env = {
     APP_STORE_CONNECT_KEY_ID: 'TESTKEYID',
@@ -23,6 +24,15 @@ function json(text: string) {
 }
 
 describe('ascli', () => {
+    test('every declared write path and method exists in Apple OpenAPI 4.5.1', () => {
+        for (const meta of Object.values(TOOL_META)) {
+            if (meta.kind !== 'write' || !meta.path) continue;
+            const violation = specViolation({ method: meta.method ?? 'POST', url: meta.path,
+                data: { data: { type: meta.resourceType ?? 'placeholder', attributes: {} } } });
+            expect([404, 405].includes(violation?.status ?? 0)).toBe(false);
+            if (violation) expect(JSON.stringify(violation.data)).not.toContain('path provided does not match');
+        }
+    });
     test('tools --json lists every MCP tool and marks store-credentials stateless', async () => {
         const result = await runCli(['tools', '--json']);
         expect(result.code).toBe(0);
@@ -36,7 +46,7 @@ describe('ascli', () => {
             description: string;
             reason?: string;
         }[];
-        expect(items.filter((item) => item.mcp_tool).length).toBe(73);
+        expect(items.filter((item) => item.mcp_tool).length).toBe(74);
         for (const item of items) {
             expect(item.kind === 'read' || item.kind === 'write').toBe(true);
             expect(item.risk === 'normal' || item.risk === 'high').toBe(true);
@@ -885,12 +895,16 @@ describe('round 2 write safety', () => {
 });
 
 describe('round 3 ownership binding follows Apple relationship chains', () => {
-    const world = () => ({
+    const world = (): AppleWorld => ({
         apps: { APP: { events: ['E1'] }, OTHER: { events: ['E9'] }, EMPTY: { events: [] } },
         versions: {
             V1: { app: 'APP', phasedRelease: 'PR1' },
             V2: { app: 'OTHER', phasedRelease: 'PR2' },
             V3: { app: 'APP' },
+        },
+        reviewSubmissions: {
+            RS1: { app: 'APP', state: 'WAITING_FOR_REVIEW', platform: 'IOS', items: [{ id: 'RI1', versionId: 'V1' }] },
+            RS2: { app: 'OTHER', state: 'IN_REVIEW', platform: 'IOS', items: [{ id: 'RI2', versionId: 'V2' }] },
         },
         versionLocalizations: { LOC: { version: 'V1' }, LOC_OTHER: { version: 'V2' } },
         screenshotSets: {
@@ -946,7 +960,13 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
             expect(wrong.writes).toEqual([]);
             expect(firstGets(wrong.calls)).toEqual(['/appStoreVersions/V1 {"include":"app"}']);
             const ok = await run([...argv, '--yes', '--confirm', 'APP']);
-            expect(ok.writes.length).toBe(1);
+            expect(ok.writes.length).toBe(argv[1] === 'submit' ? 3 : 1);
+            if (argv[1] === 'submit') {
+                expect(ok.code).toBe(0);
+                expect(ok.writes.map((call) => call.url)).toEqual([
+                '/reviewSubmissions', '/reviewSubmissionItems', '/reviewSubmissions/created-1',
+                ]);
+            }
         }
     });
 
@@ -1015,13 +1035,11 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
     });
 
     test('event delete/submit need the event id in the app list; a non-empty list is not enough', async () => {
-        for (const argv of [['event', 'delete', 'E1'], ['event', 'submit', 'E1']]) {
+        for (const argv of [['event', 'delete', 'E1'], ['event', 'submit', 'E1', '--app-id', 'APP']]) {
             const ok = await run([...argv, '--yes', '--confirm', 'APP']);
-            // POST /appEventSubmissions is not in Apple's spec (MCP's original endpoint), so the
-            // strict mock answers 404 there; what matters here is that binding let the write through.
-            expect(ok.code).toBe(argv[1] === 'submit' ? 3 : 0);
+            expect(ok.code).toBe(0);
             expect(firstGets(ok.calls)[0]).toBe('/apps/APP/appEvents {"filter[id]":"E1","limit":200}');
-            expect(ok.writes.length).toBe(1);
+            expect(ok.writes.length).toBe(argv[1] === 'submit' ? 3 : 1);
 
             // OTHER has events (E9) and Apple ignores filter[id], so the list is non-empty.
             const other = await run([...argv, '--yes', '--confirm', 'OTHER']);
@@ -1065,11 +1083,68 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
         expect(del.writes.map((call) => call.url)).toEqual(['/customerReviewResponses/RESP1']);
     });
 
-    test('version cancel is rejected before any request: the endpoint is not in the spec', async () => {
-        const cancel = await run(['version', 'cancel', 'RR1', '--yes', '--confirm', 'APP']);
-        expect(cancel.code).toBe(2);
-        expect(json(cancel.stderr).error.message).toContain('appStoreReviewRequests');
-        expect(cancel.calls).toEqual([]);
+    test('version cancel resolves and verifies the active submission before PATCH', async () => {
+        const direct = await run(['version', 'cancel', 'RS1', '--yes', '--confirm', 'APP']);
+        expect(direct.code).toBe(0);
+        expect(direct.writes.map((call) => `${call.method} ${call.url}`)).toEqual(['PATCH /reviewSubmissions/RS1']);
+        expect((direct.writes[0]?.data as { data: { attributes: { canceled: boolean } } }).data.attributes).toEqual({ canceled: true });
+        const byVersion = await run(['version', 'cancel', '--version-id', 'V1', '--yes', '--confirm', 'APP']);
+        expect(byVersion.code).toBe(0);
+        expect(byVersion.writes[0]?.url).toBe('/reviewSubmissions/RS1');
+        const wrong = await run(['version', 'cancel', 'RS2', '--yes', '--confirm', 'APP']);
+        expect(wrong.code).toBe(2);
+        expect(wrong.writes).toEqual([]);
+        const missing = await run(['version', 'cancel', '--app-id', 'EMPTY', '--yes', '--confirm', 'EMPTY']);
+        expect(missing.code).toBe(2);
+        expect(missing.writes).toEqual([]);
+    });
+
+    test('review submission list returns item summaries and ambiguous cancel stays read-only', async () => {
+        const listed = await run(['review-submission', 'list', '--app-id', 'APP']);
+        expect(listed.code).toBe(0);
+        expect(json(listed.stdout)[0]).toMatchObject({ id: 'RS1', state: 'WAITING_FOR_REVIEW', items: [{ appStoreVersionId: 'V1' }] });
+        expect(listed.writes).toEqual([]);
+        const ambiguous = await run(['version', 'cancel', '--app-id', 'APP', '--yes', '--confirm', 'APP'], {
+            ...world(), reviewSubmissions: {
+                RS1: { app: 'APP', state: 'WAITING_FOR_REVIEW', platform: 'IOS', items: [{ id: 'RI1', versionId: 'V1' }] },
+                RS3: { app: 'APP', state: 'IN_REVIEW', platform: 'IOS', items: [{ id: 'RI3', eventId: 'E1' }] },
+            },
+        });
+        expect(ambiguous.code).toBe(2);
+        expect(json(ambiguous.stderr).error.message).toContain('RS1, RS3');
+        expect(ambiguous.writes).toEqual([]);
+    });
+
+    test('submission dry-runs only plan paths and methods in Apple OpenAPI', async () => {
+        for (const argv of [
+            ['version', 'submit', 'V1'],
+            ['version', 'cancel', 'RS1'],
+            ['event', 'submit', 'E1', '--app-id', 'APP'],
+        ]) {
+            const result = await run(argv);
+            expect(result.code).toBe(0);
+            expect(result.writes).toEqual([]);
+            const steps = json(result.stdout).steps as { method: string; path: string; body: unknown; params?: Record<string, unknown> }[];
+            for (const step of steps) {
+                const violation = specViolation({ method: step.method as HttpCall['method'], url: step.path, data: step.body, params: step.params });
+                expect(violation).toBeUndefined();
+            }
+            expect(steps.some((step) => /appStoreReviewRequests|appEventSubmissions/.test(step.path))).toBe(false);
+        }
+    });
+
+    test('missing created submission id stops before item or submit writes', async () => {
+        const calls: HttpCall[] = [];
+        const base = appleTransport(world(), calls);
+        const result = await runCli(['version', 'submit', 'V1', '--yes', '--confirm', 'APP'], {
+            env,
+            transport: { send: (call) => call.method === 'POST' && call.url === '/reviewSubmissions'
+                ? Promise.resolve({ status: 201, headers: {}, data: { data: {} } })
+                : base.send(call) },
+        });
+        expect(result.code).toBe(3);
+        expect(result.stdout).toBe('');
+        expect(calls.every((call) => call.method === 'GET')).toBe(true);
     });
 
     test('user --confirm matches email/username case-insensitively, userId exactly', async () => {

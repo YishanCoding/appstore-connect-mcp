@@ -68,9 +68,6 @@ const EVENT_TOOLS = new Set(['appstore_delete_event', 'appstore_submit_event']);
 /** Tools that take the CLI-only --version-id flag for binding. */
 export const BIND_VERSION_ID_TOOLS = PHASED_TOOLS;
 
-export const CANCEL_REVIEW_UNSUPPORTED =
-    'version cancel 会发 DELETE /appStoreReviewRequests/{id}，但 Apple App Store Connect OpenAPI（4.5）里没有 appStoreReviewRequests 这个资源，线上 GET 返回 404，无法确认归属，已拒绝写入（MCP 原有问题，见 docs/cli-spec.md）';
-
 function id(value: unknown): string {
     return encodeURIComponent(String(value ?? ''));
 }
@@ -86,7 +83,18 @@ function relId(payload: unknown, key: string): string | undefined {
  * Ids that come from an earlier response are shown as {placeholders}.
  */
 export function bindingReads(toolName: string, args: Record<string, unknown>, ctx: BindContext = {}): BindRead[] {
-    if (toolName === 'appstore_invite_user' || toolName === 'appstore_cancel_review') return [];
+    if (toolName === 'appstore_cancel_review') {
+        const reads: BindRead[] = args.versionId ? [{ method: 'GET', path: `/appStoreVersions/${id(args.versionId)}`, params: { include: 'app' } }] : [];
+        if (args.reviewSubmissionId) {
+            reads.push({ method: 'GET', path: `/reviewSubmissions/${id(args.reviewSubmissionId)}`, params: { include: 'app' } });
+            if (args.versionId) reads.push({ method: 'GET', path: `/reviewSubmissions/${id(args.reviewSubmissionId)}/items`, params: { include: 'appStoreVersion,appEvent', limit: 200 } });
+            return reads;
+        }
+        reads.push({ method: 'GET', path: '/reviewSubmissions', params: { 'filter[app]': args.appId ?? '{app from --version-id}', 'filter[state]': 'WAITING_FOR_REVIEW,IN_REVIEW,UNRESOLVED_ISSUES', limit: 200 }, note: '分页读完；候选必须唯一' });
+        if (args.versionId) reads.push({ method: 'GET', path: '/reviewSubmissions/{candidateId}/items', params: { include: 'appStoreVersion,appEvent', limit: 200 } });
+        return reads;
+    }
+    if (toolName === 'appstore_invite_user') return [];
     if (REVIEW_TOOLS.has(toolName)) {
         const app = ctx.confirm ? id(ctx.confirm) : '{--confirm}';
         return [{
@@ -165,7 +173,7 @@ export function bindingReads(toolName: string, args: Record<string, unknown>, ct
 }
 
 export type ConfirmGate =
-    | { ok: true }
+    | { ok: true; reviewSubmissionId?: string }
     | { ok: false; message: string };
 
 const deny = (message: string): ConfirmGate => ({ ok: false, message });
@@ -228,7 +236,20 @@ export async function bindConfirm(
         return { ok: true };
     }
 
-    if (toolName === 'appstore_cancel_review') return deny(CANCEL_REVIEW_UNSUPPORTED);
+    if (toolName === 'appstore_cancel_review') {
+        const { ReviewSubmissionManager } = await import('../programs/review-submissions/review-submission-manager.js');
+        try {
+            const target = await new ReviewSubmissionManager({
+                get: async <T = unknown>(path: string, params?: Record<string, unknown>) => reader.get(path, params) as Promise<T>,
+                getAllPages: async <T = unknown>(path: string, params?: Record<string, unknown>) => reader.getAll(path, params) as Promise<T[]>,
+                post: async () => { throw new Error('ownership check is read-only'); },
+                patch: async () => { throw new Error('ownership check is read-only'); },
+            }).resolveCancel(args as { reviewSubmissionId?: string; versionId?: string; appId?: string });
+            return target.appId === confirm ? { ok: true, reviewSubmissionId: target.id } : deny(`--confirm 与目标资源所属 app 不一致（资源属于 ${target.appId}）`);
+        } catch (error) {
+            return deny(error instanceof Error ? error.message : String(error));
+        }
+    }
 
     const matchApp = (actual: string | undefined, via: string): ConfirmGate => {
         if (!actual) return deny(`无法从目标资源确认所属 app（${via}），已拒绝写入`);
@@ -332,6 +353,7 @@ export async function bindConfirm(
     }
 
     if (EVENT_TOOLS.has(toolName)) {
+        if (toolName === 'appstore_submit_event' && args.appId !== confirm) return deny('--app-id 必须等于 --confirm');
         const eventId = String(args.eventId ?? '');
         let events: unknown[];
         try {

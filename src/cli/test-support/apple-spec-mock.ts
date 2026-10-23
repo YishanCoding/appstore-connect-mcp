@@ -36,6 +36,7 @@ export interface AppleWorld {
     /** appId → event ids. */
     apps?: Record<string, { events?: string[] }>;
     versions?: Record<string, { app: string; phasedRelease?: string }>;
+    reviewSubmissions?: Record<string, { app: string; state: string; platform?: string; items?: { id: string; versionId?: string; eventId?: string }[] }>;
     versionLocalizations?: Record<string, { version: string }>;
     screenshotSets?: Record<string, { versionLocalization?: string; cppLocalization?: string; screenshots?: string[] }>;
     cppLocalizations?: Record<string, { cppVersion: string }>;
@@ -113,7 +114,14 @@ export function specViolation(call: HttpCall): HttpResult | undefined {
             const data = raw.data as { type?: unknown; attributes?: unknown; relationships?: Record<string, unknown> } | null;
             if (!data || typeof data !== 'object') return error(400, 'ENTITY_ERROR', 'data is required');
             if (typeof data.type !== 'string' || !data.type) return error(400, 'ENTITY_ERROR', 'data.type is required');
-            if (!data.attributes || typeof data.attributes !== 'object' || Array.isArray(data.attributes)) {
+            if (matched.template === '/reviewSubmissions' || matched.template === '/reviewSubmissions/{id}') {
+                if (data.type !== 'reviewSubmissions') return error(400, 'ENTITY_ERROR', 'Expected reviewSubmissions');
+            }
+            if (matched.template === '/reviewSubmissionItems' && data.type !== 'reviewSubmissionItems') {
+                return error(400, 'ENTITY_ERROR', 'Expected reviewSubmissionItems');
+            }
+            if (!['/reviewSubmissions', '/reviewSubmissionItems'].includes(matched.template) &&
+                (!data.attributes || typeof data.attributes !== 'object' || Array.isArray(data.attributes))) {
                 return error(400, 'ENTITY_ERROR', 'data.attributes is required');
             }
             // Required relationships come from Apple's create (POST) request schemas.
@@ -183,7 +191,32 @@ function answer(call: HttpCall, world: AppleWorld): HttpResult {
             return resource('appStoreVersions', id, {
                 app: { type: 'apps', id: v.app },
                 appStoreVersionPhasedRelease: { type: 'appStoreVersionPhasedReleases', id: v.phasedRelease },
-            }, call);
+            }, call, { platform: 'IOS' });
+        }
+        case '/reviewSubmissions': {
+            const filterApp = String(call.params?.['filter[app]'] ?? '');
+            const states = String(call.params?.['filter[state]'] ?? '').split(',');
+            const platform = call.params?.['filter[platform]'];
+            const rows = Object.entries(world.reviewSubmissions ?? {}).filter(([, row]) =>
+                row.app === filterApp && (!call.params?.['filter[state]'] || states.includes(row.state)) && (!platform || row.platform === platform));
+            return { status: 200, headers: {}, data: { data: rows.map(([id, row]) => ({
+                id, type: 'reviewSubmissions', attributes: { state: row.state, platform: row.platform },
+            })) } };
+        }
+        case '/reviewSubmissions/{id}': {
+            const row = world.reviewSubmissions?.[id];
+            if (!row) return notFound();
+            return resource('reviewSubmissions', id, { app: { type: 'apps', id: row.app } }, call, { state: row.state, platform: row.platform });
+        }
+        case '/reviewSubmissions/{id}/items': {
+            const row = world.reviewSubmissions?.[id];
+            if (!row) return notFound();
+            return { status: 200, headers: {}, data: { data: (row.items ?? []).map((item) => ({
+                id: item.id, type: 'reviewSubmissionItems', relationships: {
+                    ...(item.versionId ? { appStoreVersion: { data: { type: 'appStoreVersions', id: item.versionId } } } : {}),
+                    ...(item.eventId ? { appEvent: { data: { type: 'appEvents', id: item.eventId } } } : {}),
+                },
+            })) } };
         }
         case '/appStoreVersionLocalizations/{id}': {
             const loc = world.versionLocalizations?.[id];

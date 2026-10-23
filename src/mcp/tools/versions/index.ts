@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AppStoreConnectClient } from '../../../programs/api-client/index.js';
 import { VersionManager } from '../../../programs/versions/index.js';
+import { ReviewSubmissionManager } from '../../../programs/review-submissions/review-submission-manager.js';
 import { getStoredCredentials } from '../auth/store-credentials.js';
 import { registerScreenshotTools } from './screenshots.js';
 
@@ -122,20 +123,38 @@ export function registerVersionTools(server: McpServer) {
     server.registerTool(
         'appstore_cancel_review',
         {
-            description: 'Cancel an App Store review request by review request ID.',
+            description: 'Cancel an active review submission. Provide its ID, a version ID, or an app ID.',
             inputSchema: z.object({
-                reviewRequestId: z.string().describe('appStoreReviewRequests ID'),
+                reviewSubmissionId: z.string().optional().describe('reviewSubmissions ID'),
+                versionId: z.string().optional().describe('Resolve the active submission containing this version'),
+                appId: z.string().optional().describe('Resolve the sole active submission for this app'),
             }),
         },
-        async ({ reviewRequestId }) => {
+        async ({ reviewSubmissionId, versionId, appId }) => {
             const client = makeClient();
             if (!client) return noCredentials();
             try {
-                await new VersionManager(client).cancelReview(reviewRequestId);
-                return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, deleted: reviewRequestId }, null, 2) }] };
+                const submission = await new VersionManager(client).cancelReview({ reviewSubmissionId, versionId, appId });
+                return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, submission }, null, 2) }] };
             } catch (e: any) {
                 return errorResponse(e);
             }
+        }
+    );
+
+    server.registerTool(
+        'appstore_list_review_submissions',
+        {
+            description: 'List review submissions and item summaries for an app.',
+            inputSchema: z.object({ appId: z.string().describe('App ID') }),
+        },
+        async ({ appId }) => {
+            const client = makeClient();
+            if (!client) return noCredentials();
+            try {
+                const submissions = await new ReviewSubmissionManager(client).list(appId);
+                return { content: [{ type: 'text' as const, text: JSON.stringify(submissions, null, 2) }] };
+            } catch (e: any) { return errorResponse(e); }
         }
     );
 

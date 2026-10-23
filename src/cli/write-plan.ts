@@ -20,7 +20,7 @@ const ID_KEYS = new Set([
     'localeId',
     'screenshotSetId',
     'phasedReleaseId',
-    'reviewRequestId',
+    'reviewSubmissionId',
     'inAppPurchaseId',
 ]);
 

@@ -11,6 +11,7 @@ import { ReviewManager } from '../programs/reviews/index.js';
 import { TestFlightManager } from '../programs/testflight/index.js';
 import { UserManager } from '../programs/users/index.js';
 import { VersionManager } from '../programs/versions/index.js';
+import { ReviewSubmissionManager } from '../programs/review-submissions/review-submission-manager.js';
 import { ExportFailed, runWrite } from './write-call.js';
 import { TOOL_META } from './meta.js';
 import { getReference, libraryIdForApp, targetOf } from '../programs/assets/library.js';
@@ -75,6 +76,8 @@ export async function executeTool(
             });
         case 'appstore_list_versions':
             return versions.listVersions(args.appId, args.platform ?? 'IOS', listOpts);
+        case 'appstore_list_review_submissions':
+            return new ReviewSubmissionManager(client).list(args.appId);
         case 'appstore_get_version':
             return versions.getVersion(args.versionId);
         case 'appstore_get_phased_release':

@@ -25,11 +25,6 @@ export interface AppEventLocalizationInfo {
     promotionalText?: string;
 }
 
-export interface AppEventSubmissionInfo {
-    id: string;
-    eventId: string;
-}
-
 export interface AppEventsResponse {
     data: any[];
     links?: { next?: string };
@@ -44,9 +39,5 @@ export interface AppEventLocalizationsResponse {
 }
 
 export interface AppEventLocalizationResponse {
-    data: any;
-}
-
-export interface AppEventSubmissionResponse {
     data: any;
 }

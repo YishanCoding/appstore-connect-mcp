@@ -8,7 +8,7 @@
 bun run build:cli && ln -sf "$PWD/dist/ascli" /Users/yishan/.local/bin/ascli
 ```
 
-写命令默认只打印将要发送的请求，退出码 0，不发写请求。dry-run 和 `--yes` 共用同一套请求构造；需要先读资源才能确定写请求时（例如回复评论、替换截图），dry-run 可以发只读 GET。加上 `--yes` 才执行。app 作用域的高风险命令还要 `--confirm <app-id>`：写入前按 Apple 规范里的关系链只读 GET，确认目标资源所属 app 与 `--confirm` 一致（每条命令的链路见 docs/cli-spec.md §3；dry-run 的 `confirm_reads` 会列出这些 GET）。例外：`review reply/delete-response` 要求 `--confirm` 等于 `--app`；`phased-release update/delete` 还要 `--version-id <appStoreVersionId>`；`version cancel` 的端点不在 Apple 规范里，`--yes` 会被拒绝。用户命令是 `--confirm <userId 或 email>`，必须等于目标（email 不区分大小写）。`--body` 不要带 JSON:API 的 `data` 信封，用字段形式，例如 `{"whatsNew":"..."}`。
+写命令默认只打印将要发送的请求，退出码 0，不发写请求。dry-run 和 `--yes` 共用同一套请求构造；需要先读资源才能确定写请求时（例如提审、撤审、回复评论），dry-run 可以发只读 GET。加上 `--yes` 才执行。app 作用域的高风险命令还要 `--confirm <app-id>`：写入前只读校验目标资源所属 app 与 `--confirm` 一致；dry-run 的 `confirm_reads` 会列出这些 GET。`phased-release update/delete` 还要 `--version-id <appStoreVersionId>`。用户命令是 `--confirm <userId 或 email>`，必须等于目标（email 不区分大小写）。`--body` 不要带 JSON:API 的 `data` 信封，用字段形式，例如 `{"whatsNew":"..."}`。
 
 ## 每个域一条例子
 
@@ -19,7 +19,11 @@ ascli build list --app <app-id> --limit 20
 ascli review list --app <app-id> --limit 5
 ascli review reply <review-id> --response-body 'Thanks for the feedback' --app <app-id>
 ascli version list --app <app-id>
-ascli version submit <version-id> --yes --confirm <app-id>
+ascli review-submission list --app-id <app-id>
+ascli version submit <version-id>                   # 只读查询后预览提交步骤
+ascli version cancel <review-submission-id>         # 只读查询后预览撤审 PATCH
+ascli version cancel --version-id <version-id>       # 自动查唯一在审 submission
+ascli version cancel --app-id <app-id>               # app 下仅有一个在审 submission 时可用
 ascli phased-release update <phased-release-id> --phased-release-state PAUSED --version-id <version-id> --yes --confirm <app-id>
 ascli version update-localization <localization-id> --body @copy.json
 ascli version-localization list --app-store-version-id <version-id>
@@ -29,7 +33,7 @@ ascli screenshot upload --app-store-version-localization-id <id> --placement-gro
 ascli cpp list --app <app-id>
 ascli cpp create --app-id <app-id> --name 'Campaign' --promotional-text 'Text' --cpp-image-path /path/hero.png --template-shot-paths '["/path/extra.png"]'
 ascli event list --app <app-id>
-ascli event submit <event-id> --yes --confirm <app-id>
+ascli event submit <event-id> --app-id <app-id>       # 只读查询后预览提交步骤
 ascli user list --limit 50
 ascli user invite --email person@example.com --first-name Ada --last-name Lovelace --roles '["MARKETING"]' --yes --confirm person@example.com
 ascli beta-group list --app <app-id>
@@ -42,6 +46,14 @@ ascli smoke --output /tmp/ascli-smoke.json
 ```
 
 `review reply`、`version submit`、`user invite`、`event submit` 这几条不带 `--yes` 时是 dry-run。analytics 走本机已登录的 opencli 浏览器会话，不是公开 API。
+
+## 审核提交与撤审（ASC API 4.5.1）
+
+`version submit` 和 `event submit` 先按 app 查可复用的 `READY_FOR_REVIEW` submission；没有时创建，再添加版本或活动 item，最后用 `submitted: true` 提交。`version cancel` 用 `canceled: true` PATCH 在审 submission。若自动查到零个或多个候选，会列出候选并拒绝写入。`review-submission list` 显示 ID、状态、平台、提交日期和 item 摘要。
+
+检查 dry-run 的 `steps` 后，执行时才加 `--yes --confirm <app-id>`。真实执行会向 Apple 送审或撤审；本仓库的自动测试只用本地 mock。
+
+依据：[Review submissions](https://developer.apple.com/documentation/appstoreconnectapi/review-submissions)、[Review submission items](https://developer.apple.com/documentation/appstoreconnectapi/review-submission-items)。
 
 ## App Asset Library 截图流程（ASC API 4.5.1）
 

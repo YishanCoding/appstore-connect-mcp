@@ -158,6 +158,7 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
                 getAll: (path, params) => client.getAllPages(path, params),
             }, bindCtx);
             if (!gate.ok) return finish(2, '', usageError(gate.message));
+            if (toolName === 'appstore_cancel_review' && gate.reviewSubmissionId) input.reviewSubmissionId = gate.reviewSubmissionId;
         }
 
         const data = await executeTool(entry.tool.name, input, client, { all: parsed.all, limit: parsed.limit });
@@ -237,7 +238,6 @@ function dryRunOutput(
 }
 
 function confirmNote(toolName: string): string {
-    if (toolName === 'appstore_cancel_review') return '--yes 会直接拒绝：Apple 规范里没有 appStoreReviewRequests，无法确认归属';
     if (toolName === 'appstore_respond_to_review' || toolName === 'appstore_delete_review_response') {
         return '--yes 时分页读完 GET /apps/{confirm}/customerReviews（limit 200），列表里必须有这条 reviewId。--confirm 与 --app 字面相等不算归属。';
     }

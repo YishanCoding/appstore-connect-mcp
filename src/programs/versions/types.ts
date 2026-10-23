@@ -29,9 +29,6 @@ export interface VersionInfo {
     createdDate: string;
 }
 
-export interface AppStoreReviewRequestResponse {
-    data: any;
-}
 
 export interface AppStoreVersionPhasedReleaseResponse {
     data: any;

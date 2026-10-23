@@ -262,13 +262,14 @@ export function registerEventsTools(server: McpServer) {
             description: 'Submit an In-App Event for App Review.',
             inputSchema: z.object({
                 eventId: z.string().describe('In-App Event ID'),
+                appId: z.string().describe('App ID that owns the event'),
             }),
         },
-        async ({ eventId }) => {
+        async ({ eventId, appId }) => {
             const client = makeClient();
             if (!client) return noCredentials();
             try {
-                const submission = await new EventManager(client).submitEvent(eventId);
+                const submission = await new EventManager(client).submitEvent(eventId, appId);
                 return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, submission }, null, 2) }] };
             } catch (e: any) {
                 return errorResponse(e);
