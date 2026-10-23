@@ -28,7 +28,7 @@ export function decideSafety(input: SafetyInput): SafetyDecision {
 }
 
 export function effectiveRisk(toolName: string, risk: 'normal' | 'high', args: Record<string, unknown>): 'normal' | 'high' {
-    if (toolName === 'appstore_upload_screenshots' && args.replaceExisting !== false) return 'high';
+    if (toolName === 'appstore_upload_screenshots' && (args.legacy ? args.replaceExisting !== false : args.replaceExisting === true)) return 'high';
     return risk;
 }
 
@@ -111,6 +111,25 @@ export function bindingReads(toolName: string, args: Record<string, unknown>, ct
             { method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', params: { include: 'app' } },
         ];
     }
+    if (toolName === 'appstore_order_asset_placements') {
+        if (args.appStoreVersionLocalizationId) return [
+            { method: 'GET', path: `/appStoreVersionLocalizations/${id(args.appStoreVersionLocalizationId)}`, params: { include: 'appStoreVersion' } },
+            { method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', params: { include: 'app' } },
+        ];
+        return [
+            { method: 'GET', path: `/appCustomProductPageLocalizations/${id(args.appCustomProductPageLocalizationId)}`, params: { include: 'appCustomProductPageVersion' } },
+            { method: 'GET', path: '/appCustomProductPageVersions/{cppVersionId}', params: { include: 'appCustomProductPage' } },
+            { method: 'GET', path: '/appCustomProductPages/{cppId}', params: { include: 'app' } },
+        ];
+    }
+    if (toolName === 'appstore_delete_asset_placement') return [
+        { method: 'GET', path: `/appAssetLibraryPlacements/${id(args.placementId)}`, params: { include: 'appStoreVersionLocalization,appCustomProductPageLocalization' } },
+        { method: 'GET', path: '/{targetLocalization}', note: '再按版本或 CPP 关系链确认 app' },
+    ];
+    if (toolName === 'appstore_delete_asset_library_image') return [
+        { method: 'GET', path: `/apps/${ctx.confirm ? id(ctx.confirm) : '{--confirm}'}/assetLibrary` },
+        { method: 'GET', path: '/appAssetLibraries/{assetLibraryId}/images', params: { 'filter[id]': args.imageId, limit: 1 } },
+    ];
     if (toolName === 'appstore_delete_screenshot_set') {
         return [
             {
@@ -252,6 +271,31 @@ export async function bindConfirm(
             await versionLocalizationApp(String(args.appStoreVersionLocalizationId ?? '')),
             'appStoreVersionLocalizations?include=appStoreVersion → appStoreVersions?include=app'
         );
+    }
+
+    if (toolName === 'appstore_order_asset_placements') {
+        const actual = args.appStoreVersionLocalizationId
+            ? await versionLocalizationApp(String(args.appStoreVersionLocalizationId))
+            : await cppLocalizationApp(String(args.appCustomProductPageLocalizationId));
+        return matchApp(actual, 'ordering 本地化关系链');
+    }
+
+    if (toolName === 'appstore_delete_asset_placement') {
+        const placement = await reader.get(`/appAssetLibraryPlacements/${id(args.placementId)}`, { include: 'appStoreVersionLocalization,appCustomProductPageLocalization' });
+        const versionLoc = relId(placement, 'appStoreVersionLocalization');
+        const cppLoc = relId(placement, 'appCustomProductPageLocalization');
+        if (versionLoc) return matchApp(await versionLocalizationApp(versionLoc), 'placement → 版本本地化 → app');
+        if (cppLoc) return matchApp(await cppLocalizationApp(cppLoc), 'placement → CPP 本地化 → app');
+        return deny('placement 不在支持的版本/CPP 本地化范围内，已拒绝写入');
+    }
+
+    if (toolName === 'appstore_delete_asset_library_image') {
+        const library = await reader.get(`/apps/${id(confirm)}/assetLibrary`);
+        const libraryId = (library as { data?: { id?: string } }).data?.id;
+        if (!libraryId) return deny('无法读取 --confirm app 的 asset library');
+        const images = await reader.get(`/appAssetLibraries/${id(libraryId)}/images`, { 'filter[id]': args.imageId, limit: 1 });
+        const found = (images as { data?: { id?: string }[] }).data?.some((image) => image.id === args.imageId);
+        return found ? { ok: true } : deny(`图片 ${args.imageId} 不属于 app ${confirm}，已拒绝写入`);
     }
 
     if (toolName === 'appstore_delete_screenshot_set') {

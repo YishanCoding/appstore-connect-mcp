@@ -1,5 +1,7 @@
 # ascli — App Store Connect CLI 规格（给 Grok 实现，Claude 验收）
 
+> 本文记录 2026-09-23 的 CLI 基线。2026-10-22 起截图默认使用 ASC API 4.5.1 App Asset Library；本页旧截图集段落只适用于 `--legacy`。现行命令与风险规则见 [cli-usage.md](cli-usage.md#app-asset-library-截图流程asc-api-451)。
+
 版本：v2 · 2026-09-23（v2：对齐三 CLI 统一约定） · 作者：Claude（规划/验收）· 实现：Grok
 
 ## 0. 先读统一约定

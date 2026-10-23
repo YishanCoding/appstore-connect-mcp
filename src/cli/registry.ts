@@ -143,7 +143,7 @@ export function helpText(resource?: string, verb?: string): string {
             ? '注意：DELETE /appStoreReviewRequests/{id} 不在 Apple OpenAPI 规范里，--yes 会被拒绝。'
             : '',
         entry.tool.name === 'appstore_upload_screenshots'
-            ? 'replaceExisting 默认 true，此时按高风险处理，需要 --confirm <app-id>。删除线上截图前会先检查本地文件。'
+            ? '默认走 App Asset Library，指定 --placement-group；--replace-existing true 会删除旧 placement，属高风险。--legacy 使用已弃用的截图集 API。'
             : '',
         '参数:',
     ];

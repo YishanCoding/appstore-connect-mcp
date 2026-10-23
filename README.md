@@ -35,6 +35,13 @@ A Model Context Protocol (MCP) server for interacting with Apple's App Store Con
 - Get In-App Purchase details
 - List subscription groups for an app
 
+### App Asset Library (ASC API 4.5.1)
+- List per-app images, reference data, and version or custom product page placements
+- Upload images once, place them on localizations, and order screenshots by placement group
+- `ascli screenshot upload` uses App Asset Library by default; legacy screenshot sets require `--legacy`
+
+See [CLI usage](docs/cli-usage.md#app-asset-library-截图流程asc-api-451) for commands and dry-run examples.
+
 ## Prerequisites
 
 - Node.js 18.0.0 or higher

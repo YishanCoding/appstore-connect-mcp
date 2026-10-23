@@ -25,7 +25,7 @@ ascli version update-localization <localization-id> --body @copy.json
 ascli version-localization list --app-store-version-id <version-id>
 ascli app-info-localization update <id> --name 'New Name'
 ascli screenshot-set list --app-store-version-localization-id <id>
-ascli screenshot upload --app-store-version-localization-id <id> --screenshot-display-type APP_IPHONE_65 --image-paths '["/path/shot.png"]' --yes --confirm <app-id>
+ascli screenshot upload --app-store-version-localization-id <id> --placement-group IPHONE_DYNAMIC_ISLAND_LARGE_PROFILE --image-paths '["/path/shot.png"]'
 ascli cpp list --app <app-id>
 ascli event list --app <app-id>
 ascli event submit <event-id> --yes --confirm <app-id>
@@ -42,6 +42,34 @@ ascli smoke --output /tmp/ascli-smoke.json
 
 `review reply`、`version submit`、`user invite`、`event submit` 这几条不带 `--yes` 时是 dry-run。analytics 走本机已登录的 opencli 浏览器会话，不是公开 API。
 
+## App Asset Library 截图流程（ASC API 4.5.1）
+
+先读运行时 reference data，再选 `placementGroup`。该值不是旧 `APP_IPHONE_67` 等 display type；旧值会报错。`reference` 返回 `placementProfileGroups`、`placementTypes` 和 `imageSpecs`，可按 `placementTypeId=APP_SCREENSHOT` 的 `specMappings` 查看每个 group 接受的规格。
+
+```bash
+ascli asset-library get --app-id <app-id>
+ascli asset-library images --app-id <app-id> --all
+ascli asset-library reference --app-id <app-id> --fields placementProfileGroups,placementTypes,imageSpecs
+ascli placement list --app-store-version-localization-id <localization-id>
+ascli placement list --app-custom-product-page-localization-id <cpp-localization-id>
+
+# 全部写命令默认 dry-run；检查 steps 和 confirm_reads 后才使用 --yes。
+ascli asset-library upload-image --app-id <app-id> --file /path/shot.png
+ascli placement create --image-id <image-id> --app-store-version-localization-id <localization-id> --placement-type APP_SCREENSHOT --placement-group <group>
+ascli placement order --app-store-version-localization-id <localization-id> --placement-group <group> --placement-ids '["<placement-1>","<placement-2>"]'
+ascli placement delete <placement-id>
+ascli asset-library delete-image <image-id>
+
+# 便捷命令按文件顺序上传、放置、排序；默认保留该 group 现有截图。
+ascli screenshot upload --app-store-version-localization-id <localization-id> --placement-group <group> --image-paths '["/path/1.png","/path/2.png"]'
+```
+
+`asset-library upload-image` 经 reserve → 分片 PUT → `uploaded: true` commit → 轮询，输出 image id、state 和 specId。`placement create` 在写前用最新 reference data 校验 group、规格和 category；非法 group 会列出合法值。`placement order` 只接受同一目标本地化与 group 的 placement ID，属于高风险操作，执行时需 `--yes --confirm <app-id>`。`placement delete`、`asset-library delete-image` 同样需要该确认；删除图片前会检查是否仍有 placement。
+
+`screenshot upload --replace-existing true` 会先处理新图片，再移除该 group 的旧 placement，随后放置并排序新截图；执行时需 `--yes --confirm <app-id>`。不带该 flag 时，旧 placement 保留，新截图排在后面。预览视频只读；本命令不上传视频。旧截图集仅通过 `screenshot upload --legacy --screenshot-display-type <old-type>` 使用；`screenshot-set list/delete` 仍可调用，但都会输出 deprecated 提示。
+
+接口依据：[Apple 迁移说明](https://developer.apple.com/documentation/appstoreconnectapi/migrating-to-the-app-asset-library)、[参考数据](https://developer.apple.com/documentation/appstoreconnectapi/discovering-asset-specifications)、[放置与排序](https://developer.apple.com/documentation/appstoreconnectapi/placing-assets-on-your-app-store-surfaces)。
+
 全局 flag：`--format json|ndjson|table`、`--fields a,b.c`、`--limit N`、`--all`、`--verbose`、`--query`、`--body`（内联 JSON 或 `@file`）。`--all` 跟随 `links.next`；同时给 `--limit` 时，`--limit` 是条数上限。
 
 退出码：0 成功（含 dry-run），2 用法或 `--confirm` 不匹配，3 API 错误，4 缺凭据。
@@ -51,7 +79,7 @@ ascli smoke --output /tmp/ascli-smoke.json
 - Analytics 的 `by-source` 和 `export` 依赖 opencli 里已经登录的 App Store Connect 浏览器会话，失败时通常是会话而不是 API key。
 - 写请求（含截图和 CPP 的提交 PATCH）只发一次，不再像早期实现那样对提交 PATCH 重试 3 次。这是 CLI 和 MCP 共用客户端之后的行为：写不重试。读请求对 429/5xx 最多重试 3 次；`Retry-After` 超过 60 秒直接报错，不继续等。axios 超时 60 秒。
 - 同一参数如果在 `--body`、flag、位置参数里给出不同的值，退出码 2。未知 flag（包括 `--yes=true`）退出码 2，不会静默丢掉。
-- `screenshot upload` 在删除线上截图之前检查每个本地文件存在且可读。`replaceExisting=true`（默认）是高风险。
+- `screenshot upload` 在写入前检查每个本地文件存在且可读。Asset Library 流程默认保留旧 placement；`--replace-existing true` 是高风险。旧 `--legacy` 流程默认替换截图集，同样属高风险。
 - 任何命令遇到 HTTP 401 都是退出码 4（凭据无效）。HTTP 403 仍是退出码 3。`analytics export` 的 `failed` 非空时退出码 3，并在 stdout 带上结果。
 - CLI 的 `version-localization batch-update` 和 `app-info-localization batch-update` 会逐条尝试全部更新，不会在第一条失败时停。stdout 列出每一条的成败；只要有失败就退出码 3。MCP 的批量 localization 仍把单条失败收进结果对象并返回成功。
 - 每次请求都会重新签 JWT，没有进程内缓存。

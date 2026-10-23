@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { generateKeyPairSync } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, test } from 'bun:test';
@@ -35,7 +36,7 @@ describe('ascli', () => {
             description: string;
             reason?: string;
         }[];
-        expect(items.filter((item) => item.mcp_tool).length).toBe(64);
+        expect(items.filter((item) => item.mcp_tool).length).toBe(73);
         for (const item of items) {
             expect(item.kind === 'read' || item.kind === 'write').toBe(true);
             expect(item.risk === 'normal' || item.risk === 'high').toBe(true);
@@ -650,7 +651,7 @@ describe('round 2 write safety', () => {
         const missing = await runCli([
             'screenshot', 'upload',
             '--app-store-version-localization-id', 'LOC',
-            '--screenshot-display-type', 'APP_IPHONE_67',
+            '--legacy', '--screenshot-display-type', 'APP_IPHONE_67',
             '--image-paths', '["/nonexistent.png"]',
             '--yes', '--confirm', 'APP',
         ], { env, transport: { async send() { throw new Error('should not send'); } } });
@@ -672,7 +673,7 @@ describe('round 2 write safety', () => {
         const dry = await runCli([
             'screenshot', 'upload',
             '--app-store-version-localization-id', 'LOC',
-            '--screenshot-display-type', 'APP_IPHONE_67',
+            '--legacy', '--screenshot-display-type', 'APP_IPHONE_67',
             '--image-paths', JSON.stringify([file]),
         ], { env, transport });
         expect(dry.code).toBe(0);
@@ -685,7 +686,7 @@ describe('round 2 write safety', () => {
         const noConfirm = await runCli([
             'screenshot', 'upload',
             '--app-store-version-localization-id', 'LOC',
-            '--screenshot-display-type', 'APP_IPHONE_67',
+            '--legacy', '--screenshot-display-type', 'APP_IPHONE_67',
             '--image-paths', JSON.stringify([file]),
             '--yes',
         ], { env, transport });
@@ -695,7 +696,7 @@ describe('round 2 write safety', () => {
         const live = await runCli([
             'screenshot', 'upload',
             '--app-store-version-localization-id', 'LOC',
-            '--screenshot-display-type', 'APP_IPHONE_67',
+            '--legacy', '--screenshot-display-type', 'APP_IPHONE_67',
             '--image-paths', JSON.stringify([file]),
             '--yes', '--confirm', 'APP',
         ], { env, transport });
@@ -1036,7 +1037,7 @@ describe('round 3 ownership binding follows Apple relationship chains', () => {
         const dir = mkdtempSync(join(tmpdir(), 'ascli-r3-shot-'));
         const file = join(dir, 'a.png');
         writeFileSync(file, 'png-bytes');
-        const base = ['screenshot', 'upload', '--screenshot-display-type', 'APP_IPHONE_67', '--file', file, '--yes'];
+        const base = ['screenshot', 'upload', '--legacy', '--screenshot-display-type', 'APP_IPHONE_67', '--file', file, '--yes'];
         const wrong = await run([...base, '--app-store-version-localization-id', 'LOC_OTHER', '--confirm', 'APP']);
         expect(wrong.code).toBe(2);
         expect(wrong.writes).toEqual([]);
@@ -1112,7 +1113,7 @@ describe('round 3 file precheck and paging host', () => {
                 const result = await runCli([
                     'screenshot', 'upload',
                     '--app-store-version-localization-id', 'LOC',
-                    '--screenshot-display-type', 'APP_IPHONE_67',
+                    '--legacy', '--screenshot-display-type', 'APP_IPHONE_67',
                     '--file', target,
                     ...extra,
                 ], { env, transport: appleTransport({}, calls) });
@@ -1178,7 +1179,7 @@ describe('round 4 review ownership, uploads, paging, mock, and 401', () => {
         const screen = await runCli([
             'screenshot', 'upload',
             '--app-store-version-localization-id', 'LOC',
-            '--screenshot-display-type', 'APP_IPHONE_67',
+            '--legacy', '--screenshot-display-type', 'APP_IPHONE_67',
             '--image-paths', JSON.stringify([shot]),
             '--replace-existing', 'false',
         ]);
@@ -1308,7 +1309,6 @@ describe('round 4 review ownership, uploads, paging, mock, and 401', () => {
 });
 
 describe('individual API key', () => {
-    const { generateKeyPairSync } = require('crypto') as typeof import('crypto');
     const pem = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
         .privateKey.export({ type: 'pkcs8', format: 'pem' })
         .toString();

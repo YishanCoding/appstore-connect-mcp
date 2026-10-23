@@ -70,7 +70,7 @@ function fetchTimeseriesForSource(
     // opencli eval prints the JS expression's string return value as-is
     // (the JS itself already does JSON.stringify(...)), so this is a single
     // JSON object literal — parse it once, no double-unwrap needed.
-    const apiResponse = parseOpencliJson(raw) as { results?: unknown[] };
+    const apiResponse = parseOpencliJson(raw) as { results?: { data?: Record<string, any>[] }[] };
 
     // Build: { measure -> { date -> value } }
     const result: Record<string, Record<string, number>> = {};

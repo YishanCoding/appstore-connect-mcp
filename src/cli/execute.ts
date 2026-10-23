@@ -13,6 +13,7 @@ import { UserManager } from '../programs/users/index.js';
 import { VersionManager } from '../programs/versions/index.js';
 import { ExportFailed, runWrite } from './write-call.js';
 import { TOOL_META } from './meta.js';
+import { getReference, libraryIdForApp, targetOf } from '../programs/assets/library.js';
 
 export interface PageOpts {
     all: boolean;
@@ -86,6 +87,25 @@ export async function executeTool(
             return metadata.listAppInfoLocalizations(args.appId, listOpts);
         case 'appstore_list_screenshot_sets':
             return listScreenshotSets(client, args.appStoreVersionLocalizationId, paging);
+        case 'appstore_get_asset_library':
+            return (await client.get<any>(`/apps/${encodeURIComponent(args.appId)}/assetLibrary`)).data;
+        case 'appstore_list_asset_library_images': {
+            const libraryId = await libraryIdForApp(client, args.appId);
+            const images = await client.getAllPages<any>(`/appAssetLibraries/${encodeURIComponent(libraryId)}/images`, {}, { limit: paging.limit });
+            return images.map((image) => ({ id: image.id, state: image.attributes?.state, specId: image.attributes?.specId,
+                width: image.attributes?.imageAsset?.width, height: image.attributes?.imageAsset?.height,
+                fileName: image.attributes?.fileName, category: image.attributes?.category }));
+        }
+        case 'appstore_get_asset_library_reference':
+            await libraryIdForApp(client, args.appId);
+            return getReference(client);
+        case 'appstore_list_asset_placements': {
+            const target = targetOf(args);
+            const path = `/${target.type}/${encodeURIComponent(target.id)}/placements`;
+            const placements = await client.getAllPages<any>(path, { sort: 'placementGroupPosition', include: 'image,video' }, { limit: paging.limit });
+            return placements.map((placement) => ({ id: placement.id, ...placement.attributes,
+                imageId: placement.relationships?.image?.data?.id, videoId: placement.relationships?.video?.data?.id }));
+        }
         case 'appstore_list_cpps':
             return new CppManager(client, args.appId).listCpps(listOpts);
         case 'appstore_list_events':

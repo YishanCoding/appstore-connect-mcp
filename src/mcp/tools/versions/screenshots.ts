@@ -117,7 +117,7 @@ export function registerScreenshotTools(server: McpServer) {
     server.registerTool(
         'appstore_list_screenshot_sets',
         {
-            description: 'List all screenshot sets (by display type) for an App Store version localization, including screenshots in each set.',
+            description: 'Deprecated: list legacy screenshot sets for an App Store version localization.',
             inputSchema: z.object({
                 appStoreVersionLocalizationId: z.string().describe('Version localization ID (from appstore_list_version_localizations)'),
             }),
@@ -151,21 +151,30 @@ export function registerScreenshotTools(server: McpServer) {
     server.registerTool(
         'appstore_upload_screenshots',
         {
-            description: 'Upload screenshots for a specific display type to an App Store version localization. Optionally replaces existing screenshots of that type first.',
+            description: 'Upload ordered screenshots through App Asset Library by default. Use --legacy for deprecated screenshot sets.',
             inputSchema: z.object({
                 appStoreVersionLocalizationId: z.string().describe('Version localization ID (from appstore_list_version_localizations)'),
-                screenshotDisplayType: z.string().describe('Display type, e.g. APP_IPHONE_65, APP_IPHONE_67, APP_IPHONE_35, APP_IPAD_PRO_3GEN_129, etc.'),
-                imagePaths: z.array(z.string()).describe('Ordered list of local file paths to upload'),
-                replaceExisting: z.boolean().optional().default(true).describe('If true, delete existing screenshots of this display type before uploading'),
+                appId: z.string().optional().describe('App ID; required for Asset Library uploads'),
+                placementGroup: z.string().optional().describe('Runtime placement group from asset-library reference'),
+                screenshotDisplayType: z.string().optional().describe('Deprecated display type, accepted only with --legacy'),
+                imagePaths: z.array(z.string()).min(1).describe('Ordered list of local file paths to upload'),
+                replaceExisting: z.boolean().optional().describe('Replace existing placements in this group; legacy defaults to true (high risk)'),
+                legacy: z.boolean().optional().default(false).describe('Use deprecated screenshot-set API'),
             }),
         },
-        async ({ appStoreVersionLocalizationId, screenshotDisplayType, imagePaths, replaceExisting }) => {
+        async ({ appStoreVersionLocalizationId, screenshotDisplayType, imagePaths, replaceExisting, appId, placementGroup, legacy }) => {
             const client = makeClient();
             if (!client) return noCredentials();
             try {
+                if (!legacy) {
+                    const { runWrite } = await import('../../../cli/write-call.js');
+                    const result = await runWrite(client, 'appstore_upload_screenshots', { appStoreVersionLocalizationId, imagePaths, replaceExisting, appId, placementGroup, legacy }, true);
+                    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+                }
+                if (!screenshotDisplayType) throw new Error('--legacy 需要 screenshotDisplayType');
                 assertReadableFiles(imagePaths);
                 // Step 1: Optionally delete existing sets of this displayType
-                if (replaceExisting) {
+                if (replaceExisting !== false) {
                     const existingResp = await client.get<any>(
                         `/appStoreVersionLocalizations/${appStoreVersionLocalizationId}/appScreenshotSets`,
                         { 'filter[screenshotDisplayType]': screenshotDisplayType, include: 'appScreenshots' }
@@ -217,7 +226,7 @@ export function registerScreenshotTools(server: McpServer) {
     server.registerTool(
         'appstore_delete_screenshot_set',
         {
-            description: 'Delete a screenshot set and all screenshots within it.',
+            description: 'Deprecated: delete a legacy screenshot set and all screenshots within it.',
             inputSchema: z.object({
                 screenshotSetId: z.string().describe('Screenshot set ID (from appstore_list_screenshot_sets)'),
             }),
