@@ -1,6 +1,7 @@
 import { AppStoreConnectClient } from '../programs/api-client/client.js';
 import { AscHttpError } from '../programs/api-client/policy.js';
-import { buildCppCreateBody, CppManager } from '../programs/cpp/index.js';
+import { buildCppCreateBody, CppManager, detachCppPlacements } from '../programs/cpp/index.js';
+import { CppPreflightError } from '../programs/cpp/cpp-manager.js';
 import {
     assertReadableFiles,
     commitScreenshotBody,
@@ -10,7 +11,7 @@ import {
 } from '../mcp/tools/versions/screenshots.js';
 import { CliUsage } from './output.js';
 import type { HttpMethod } from './meta.js';
-import { commitImageBody, getReference, libraryIdForApp, orderBody, placementBody, reserveImageBody, targetOf, uploadImage, validateGroup } from '../programs/assets/library.js';
+import { commitImageBody, getReference, libraryIdForApp, orderBody, placementBody, reserveImageBody, screenshotLimit, targetOf, uploadImage, validateGroup } from '../programs/assets/library.js';
 
 export interface Step {
     method: HttpMethod | 'PUT';
@@ -246,9 +247,19 @@ async function dispatch(ctx: Ctx, name: string, args: Record<string, any>): Prom
             const response = await write(ctx, 'PATCH', `/appCustomProductPageLocalizations/${enc(args.localeId)}`, body);
             return response?.data ?? response;
         }
-        case 'appstore_delete_cpp':
+        case 'appstore_delete_cpp': {
+            if (!ctx.execute) {
+                ctx.steps.push({ method: 'GET', path: `/appCustomProductPages/${enc(args.cppId)}/appCustomProductPageVersions`, body: null });
+                ctx.steps.push({ method: 'GET', path: '/appCustomProductPageVersions/{versionId}/appCustomProductPageLocalizations', body: null });
+                ctx.steps.push({ method: 'GET', path: '/appCustomProductPageLocalizations/{localizationId}/placements', body: null });
+                ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryPlacements/{placementId}', body: null, note: '先删 placement：CPP 删除后残留的 INACTIVE placement 无法再删，图片会卡在素材库' });
+                await write(ctx, 'DELETE', `/appCustomProductPages/${enc(args.cppId)}`, null);
+                return;
+            }
+            const detachedPlacementIds = await detachCppPlacements(ctx.client!, args.cppId);
             await write(ctx, 'DELETE', `/appCustomProductPages/${enc(args.cppId)}`, null);
-            return { success: true, deleted: args.cppId };
+            return { success: true, deleted: args.cppId, detachedPlacementIds };
+        }
         case 'appstore_create_event': {
             const body = createBody('appEvents', pick(args, EVENT_FIELDS), { key: 'app', type: 'apps', id: args.appId });
             const response = await write(ctx, 'POST', '/appEvents', body);
@@ -481,12 +492,17 @@ async function deleteLibraryImage(ctx: Ctx, imageId: string) {
 async function uploadLibraryScreenshots(ctx: Ctx, args: Record<string, any>) {
     if (args.screenshotDisplayType) throw new CliUsage('旧 display type 只支持 --legacy；请使用 asset-library reference 选择 --placement-group');
     if (!args.placementGroup) throw new CliUsage('新截图流程需要 --placement-group；用 asset-library reference 查看合法值');
-    const locId = args.appStoreVersionLocalizationId;
-    const target = { appStoreVersionLocalizationId: locId };
-    const path = `/appStoreVersionLocalizations/${enc(locId)}/placements`;
+    const target = { appStoreVersionLocalizationId: args.appStoreVersionLocalizationId,
+        appCustomProductPageLocalizationId: args.appCustomProductPageLocalizationId };
+    const t = targetOf(target);
+    const path = `/${t.type}/${enc(t.id)}/placements`;
     if (!ctx.execute) {
-        ctx.steps.push({ method: 'GET', path: `/appStoreVersionLocalizations/${enc(locId)}`, body: null, params: { include: 'appStoreVersion' } });
-        ctx.steps.push({ method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', body: null, params: { include: 'app' } });
+        ctx.steps.push({ method: 'GET', path: `/${t.type}/${enc(t.id)}`, body: null, params: { include: t.key === 'appStoreVersionLocalization' ? 'appStoreVersion' : 'appCustomProductPageVersion' } });
+        if (t.key === 'appStoreVersionLocalization') ctx.steps.push({ method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', body: null, params: { include: 'app' } });
+        else {
+            ctx.steps.push({ method: 'GET', path: '/appCustomProductPageVersions/{appCustomProductPageVersionId}', body: null, params: { include: 'appCustomProductPage' } });
+            ctx.steps.push({ method: 'GET', path: '/appCustomProductPages/{appCustomProductPageId}', body: null, params: { include: 'app' } });
+        }
         ctx.steps.push({ method: 'GET', path: '/apps/{appId}/assetLibrary', body: null });
         ctx.steps.push({ method: 'GET', path: '/appAssetLibraryRefData', body: null });
         ctx.steps.push({ method: 'GET', path, body: null, params: { 'filter[placementType]': 'APP_SCREENSHOT', 'filter[placementGroup]': args.placementGroup, sort: 'placementGroupPosition' } });
@@ -508,11 +524,12 @@ async function uploadLibraryScreenshots(ctx: Ctx, args: Record<string, any>) {
     try { validateGroup(reference, 'APP_SCREENSHOT', args.placementGroup); }
     catch (error) { throw new CliUsage(error instanceof Error ? error.message : String(error)); }
     const existing = await ctx.client!.getAllPages<any>(path, { 'filter[placementType]': 'APP_SCREENSHOT', 'filter[placementGroup]': args.placementGroup, sort: 'placementGroupPosition' });
-    const policy = (reference.features ?? []).find((feature: any) => feature.featureId === 'APP_STORE_VERSIONS')
-        ?.placementPolicies?.find((item: any) => item.placementType === 'APP_SCREENSHOT');
-    const maxCount = policy?.groupLimits?.find((limit: any) => limit.groupIds?.includes(args.placementGroup))?.maxCount;
+    const feature = t.key === 'appStoreVersionLocalization' ? 'APP_STORE_VERSIONS' : 'CUSTOM_PRODUCT_PAGES';
+    let maxCount: number;
+    try { maxCount = screenshotLimit(reference, feature, args.placementGroup); }
+    catch (error) { throw new CliUsage(error instanceof Error ? error.message : String(error)); }
     const targetCount = (args.replaceExisting ? 0 : existing.length) + args.imagePaths.length;
-    if (typeof maxCount === 'number' && targetCount > maxCount) {
+    if (targetCount > maxCount) {
         throw new CliUsage(`该 group 最多 ${maxCount} 张截图；当前 ${existing.length} 张，本次 ${args.imagePaths.length} 张。可使用 --replace-existing true`);
     }
     const ids: string[] = args.replaceExisting ? [] : existing.map((item) => item.id);
@@ -611,8 +628,24 @@ async function createCpp(ctx: Ctx, args: Record<string, any>) {
     if (typeof args.promotionalText === 'string' && args.promotionalText.length > 170) {
         throw new CliUsage(`promotionalText exceeds 170 chars (${args.promotionalText.length})`);
     }
-    const body = buildCppCreateBody(args.appId, args.name, args.promotionalText);
+    const body = buildCppCreateBody(args.appId, args.name, args.promotionalText, args.locale ?? '{appPrimaryLocale}');
     if (!ctx.execute) {
+        if (!args.legacy) {
+            const group = args.placementGroup ?? 'IPHONE_FACE_ID_LARGE_PROFILE';
+            const target = { appCustomProductPageLocalizationId: '{localeId}' };
+            ctx.steps.push({ method: 'GET', path: '/appAssetLibraryRefData', body: null, note: '建 CPP 前校验 group 与截图数量上限' });
+            ctx.steps.push({ method: 'GET', path: `/apps/${enc(args.appId)}/assetLibrary`, body: null });
+            ctx.steps.push({ method: 'POST', path: '/appCustomProductPages', body });
+            for (const file of files) {
+                ctx.steps.push({ method: 'POST', path: '/appAssetLibraryImages', body: reserveImageBody('{assetLibraryId}', file) });
+                ctx.steps.push(plannedUploadStep());
+                ctx.steps.push({ method: 'PATCH', path: '/appAssetLibraryImages/{reservedId}', body: commitImageBody('{reservedId}') });
+                ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{reservedId}', body: null, note: '轮询直到处理完成并校验 specId' });
+                ctx.steps.push({ method: 'POST', path: '/appAssetLibraryPlacements', body: placementBody('{reservedId}', target, 'APP_SCREENSHOT', group) });
+            }
+            ctx.steps.push({ method: 'POST', path: '/appAssetLibraryPlacementOrderingRequests', body: orderBody(['{createdPlacementIds}'], target, group) });
+            return;
+        }
         ctx.steps.push({ method: 'POST', path: '/appCustomProductPages', body });
         const setBody = {
             data: {
@@ -634,7 +667,12 @@ async function createCpp(ctx: Ctx, args: Record<string, any>) {
         return { dry_run: true };
     }
     if (!ctx.client) throw new CliUsage('没有可用的客户端');
-    return new CppManager(ctx.client, args.appId).createCpp(args.name, args.promotionalText, args.cppImagePath, args.templateShotPaths ?? []);
+    try {
+        return await new CppManager(ctx.client, args.appId).createCpp(args.name, args.promotionalText, args.cppImagePath, args.templateShotPaths ?? [], args.placementGroup, args.legacy, args.locale);
+    } catch (error) {
+        if (error instanceof CppPreflightError) throw new CliUsage(error.message);
+        throw error;
+    }
 }
 
 async function upsertBetaLocalization(ctx: Ctx, args: Record<string, any>) {

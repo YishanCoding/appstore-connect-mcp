@@ -2,26 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AppStoreConnectClient, UserManager } from '../../../programs/index.js';
 import { getStoredCredentials } from '../auth/store-credentials.js';
+import { roleListSchema } from './role-schema.js';
 
 const inputSchema = z.object({
     userId: z.string().describe('User ID to update (from appstore_list_users)'),
-    roles: z.array(z.enum([
-        'ADMIN',
-        'FINANCE',
-        'TECHNICAL',
-        'ACCOUNT_HOLDER',
-        'READ_ONLY',
-        'SALES',
-        'MARKETING',
-        'APP_MANAGER',
-        'CUSTOMER_SUPPORT',
-        'ACCESS_TO_REPORTS',
-        'CREATE_APPS',
-        'DEVELOPER',
-        'CLOUD_MANAGED_DEVELOPER_ID',
-        'CLOUD_MANAGED_APP_DISTRIBUTION',
-        'GENERATE_INDIVIDUAL_KEYS',
-    ])).describe('New roles to assign to the user (replaces existing roles)'),
+    roles: roleListSchema,
 });
 
 export function registerUpdateUserRoles(server: McpServer) {

@@ -2,28 +2,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AppStoreConnectClient, UserManager } from '../../../programs/index.js';
 import { getStoredCredentials } from '../auth/store-credentials.js';
+import { roleListSchema } from './role-schema.js';
 
 const inputSchema = z.object({
     email: z.string().email().describe('Email address of the user to invite'),
     firstName: z.string().describe('First name of the user'),
     lastName: z.string().describe('Last name of the user'),
-    roles: z.array(z.enum([
-        'ADMIN',
-        'FINANCE',
-        'TECHNICAL',
-        'ACCOUNT_HOLDER',
-        'READ_ONLY',
-        'SALES',
-        'MARKETING',
-        'APP_MANAGER',
-        'CUSTOMER_SUPPORT',
-        'ACCESS_TO_REPORTS',
-        'CREATE_APPS',
-        'DEVELOPER',
-        'CLOUD_MANAGED_DEVELOPER_ID',
-        'CLOUD_MANAGED_APP_DISTRIBUTION',
-        'GENERATE_INDIVIDUAL_KEYS',
-    ])).describe('Roles to assign to the user'),
+    roles: roleListSchema,
     allAppsVisible: z.boolean().optional().default(false).describe('Whether the user can see all apps'),
     provisioningAllowed: z.boolean().optional().default(false).describe('Whether the user can manage certificates, identifiers and devices'),
 });

@@ -106,6 +106,11 @@ export function bindingReads(toolName: string, args: Record<string, unknown>, ct
         return [{ method: 'GET', path: `/appStoreVersions/${version}`, params: { include: 'app,appStoreVersionPhasedRelease' } }];
     }
     if (toolName === 'appstore_upload_screenshots') {
+        if (args.appCustomProductPageLocalizationId) return [
+            { method: 'GET', path: `/appCustomProductPageLocalizations/${id(args.appCustomProductPageLocalizationId)}`, params: { include: 'appCustomProductPageVersion' } },
+            { method: 'GET', path: '/appCustomProductPageVersions/{cppVersionId}', params: { include: 'appCustomProductPage' } },
+            { method: 'GET', path: '/appCustomProductPages/{cppId}', params: { include: 'app' } },
+        ];
         return [
             { method: 'GET', path: `/appStoreVersionLocalizations/${id(args.appStoreVersionLocalizationId)}`, params: { include: 'appStoreVersion' } },
             { method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', params: { include: 'app' } },
@@ -123,8 +128,8 @@ export function bindingReads(toolName: string, args: Record<string, unknown>, ct
         ];
     }
     if (toolName === 'appstore_delete_asset_placement') return [
-        { method: 'GET', path: `/appAssetLibraryPlacements/${id(args.placementId)}`, params: { include: 'appStoreVersionLocalization,appCustomProductPageLocalization' } },
-        { method: 'GET', path: '/{targetLocalization}', note: '再按版本或 CPP 关系链确认 app' },
+        { method: 'GET', path: `/appAssetLibraryPlacements/${id(args.placementId)}`, params: { include: 'appStoreVersionLocalization,appCustomProductPageLocalization,image' } },
+        { method: 'GET', path: '/{targetLocalization}', note: '再按版本或 CPP 关系链确认 app；本地化已删除的 INACTIVE placement 改为确认其图片在 --confirm app 的素材库中' },
     ];
     if (toolName === 'appstore_delete_asset_library_image') return [
         { method: 'GET', path: `/apps/${ctx.confirm ? id(ctx.confirm) : '{--confirm}'}/assetLibrary` },
@@ -268,8 +273,10 @@ export async function bindConfirm(
 
     if (toolName === 'appstore_upload_screenshots') {
         return matchApp(
-            await versionLocalizationApp(String(args.appStoreVersionLocalizationId ?? '')),
-            'appStoreVersionLocalizations?include=appStoreVersion → appStoreVersions?include=app'
+            args.appCustomProductPageLocalizationId
+                ? await cppLocalizationApp(String(args.appCustomProductPageLocalizationId))
+                : await versionLocalizationApp(String(args.appStoreVersionLocalizationId ?? '')),
+            '截图本地化关系链'
         );
     }
 
@@ -281,11 +288,22 @@ export async function bindConfirm(
     }
 
     if (toolName === 'appstore_delete_asset_placement') {
-        const placement = await reader.get(`/appAssetLibraryPlacements/${id(args.placementId)}`, { include: 'appStoreVersionLocalization,appCustomProductPageLocalization' });
+        const placement = await reader.get(`/appAssetLibraryPlacements/${id(args.placementId)}`, { include: 'appStoreVersionLocalization,appCustomProductPageLocalization,image' });
         const versionLoc = relId(placement, 'appStoreVersionLocalization');
         const cppLoc = relId(placement, 'appCustomProductPageLocalization');
         if (versionLoc) return matchApp(await versionLocalizationApp(versionLoc), 'placement → 版本本地化 → app');
         if (cppLoc) return matchApp(await cppLocalizationApp(cppLoc), 'placement → CPP 本地化 → app');
+        // Deleting a CPP leaves its placements INACTIVE with no localization; bind via the image instead.
+        const imageId = relId(placement, 'image');
+        const state = (placement as { data?: { attributes?: { state?: string } } }).data?.attributes?.state;
+        if (imageId && state === 'INACTIVE') {
+            const library = await reader.get(`/apps/${id(confirm)}/assetLibrary`);
+            const libraryId = (library as { data?: { id?: string } }).data?.id;
+            if (!libraryId) return deny('无法读取 --confirm app 的 asset library');
+            const images = await reader.get(`/appAssetLibraries/${id(libraryId)}/images`, { 'filter[id]': imageId, limit: 1 });
+            const found = (images as { data?: { id?: string }[] }).data?.some((image) => image.id === imageId);
+            return found ? { ok: true } : deny(`孤立 placement 的图片 ${imageId} 不属于 app ${confirm}，已拒绝写入`);
+        }
         return deny('placement 不在支持的版本/CPP 本地化范围内，已拒绝写入');
     }
 

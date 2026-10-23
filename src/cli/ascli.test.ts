@@ -460,6 +460,7 @@ describe('screenshot commit', () => {
                 '--promotional-text', 'hello',
                 '--cpp-image-path', hero,
                 '--template-shot-paths', JSON.stringify([extra]),
+                '--legacy',
                 '--yes',
             ],
             {

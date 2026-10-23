@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { createHash } from 'crypto';
-import { readFileSync, statSync } from 'fs';
+import { accessSync, constants, readFileSync, statSync } from 'fs';
 import { basename } from 'path';
 import { AppStoreConnectClient } from '../api-client/index.js';
+import { getReference, libraryIdForApp, orderBody, placementBody, screenshotLimit, uploadImage, validateGroup } from '../assets/library.js';
 import {
     CppInfo,
     CppLocaleInfo,
@@ -15,7 +16,30 @@ import {
 // Bypass system proxy for S3 and CDN calls — same fix as the Python upload script
 const s3Client = axios.create({ proxy: false });
 
-export function buildCppCreateBody(appId: string, name: string, promotionalText: string) {
+export class CppPreflightError extends Error {}
+
+/**
+ * Deleting a CPP turns its asset placements INACTIVE with no localization; Apple then answers
+ * DELETE on them with 204 but keeps them, so their images can never be deleted. Remove the
+ * placements while the CPP still exists.
+ */
+export async function detachCppPlacements(client: AppStoreConnectClient, cppId: string): Promise<string[]> {
+    const removed: string[] = [];
+    const versions = await client.getAllPages<any>(`/appCustomProductPages/${encodeURIComponent(cppId)}/appCustomProductPageVersions`);
+    for (const version of versions) {
+        const locs = await client.getAllPages<any>(`/appCustomProductPageVersions/${encodeURIComponent(version.id)}/appCustomProductPageLocalizations`);
+        for (const loc of locs) {
+            const placements = await client.getAllPages<any>(`/appCustomProductPageLocalizations/${encodeURIComponent(loc.id)}/placements`);
+            for (const placement of placements) {
+                await client.delete(`/appAssetLibraryPlacements/${encodeURIComponent(placement.id)}`);
+                removed.push(placement.id);
+            }
+        }
+    }
+    return removed;
+}
+
+export function buildCppCreateBody(appId: string, name: string, promotionalText: string, locale = 'en-US') {
     return {
         data: {
             type: 'appCustomProductPages',
@@ -40,7 +64,7 @@ export function buildCppCreateBody(appId: string, name: string, promotionalText:
             {
                 type: 'appCustomProductPageLocalizations',
                 id: '${loc1}',
-                attributes: { locale: 'en-US', promotionalText },
+                attributes: { locale, promotionalText },
             },
         ],
     };
@@ -75,6 +99,7 @@ export class CppManager {
     }
 
     public async deleteCpp(cppId: string): Promise<void> {
+        await detachCppPlacements(this.client, cppId);
         await this.client.delete(`/appCustomProductPages/${cppId}`);
     }
 
@@ -100,13 +125,42 @@ export class CppManager {
         name: string,
         promotionalText: string,
         cppImagePath: string,
-        templateShotPaths: string[]
+        templateShotPaths: string[],
+        placementGroup = 'IPHONE_FACE_ID_LARGE_PROFILE',
+        legacy = false,
+        locale?: string
     ): Promise<CreateCppResult> {
         if (promotionalText.length > 170) {
             throw new Error(`promotionalText exceeds 170 chars (${promotionalText.length})`);
         }
 
-        const createBody = buildCppCreateBody(this.appId, name, promotionalText);
+        const allShots = [cppImagePath, ...templateShotPaths];
+        for (const file of allShots) {
+            try {
+                const stat = statSync(file);
+                if (!stat.isFile() || stat.size === 0) throw new Error('不是非空普通文件');
+                accessSync(file, constants.R_OK);
+            } catch {
+                throw new CppPreflightError(`截图文件不存在、不可读、不是普通文件或为空: ${file}`);
+            }
+        }
+        // Preflight the full batch before creating a CPP: a failed check must not leave one behind.
+        let libraryId: string | undefined;
+        let reference: any;
+        if (!legacy) {
+            reference = await getReference(this.client);
+            try {
+                validateGroup(reference, 'APP_SCREENSHOT', placementGroup);
+                const maxCount = screenshotLimit(reference, 'CUSTOM_PRODUCT_PAGES', placementGroup);
+                if (allShots.length > maxCount) throw new Error(`该 group 最多 ${maxCount} 张 CPP 截图；本次 ${allShots.length} 张`);
+            } catch (error) {
+                throw new CppPreflightError(error instanceof Error ? error.message : String(error));
+            }
+            libraryId = await libraryIdForApp(this.client, this.appId);
+        }
+        // The CPP locale must exist on the app's store version, so default to the app's primary locale.
+        const cppLocale = locale ?? (await this.client.get<any>(`/apps/${encodeURIComponent(this.appId)}`)).data?.attributes?.primaryLocale ?? 'en-US';
+        const createBody = buildCppCreateBody(this.appId, name, promotionalText, cppLocale);
 
         const createResp = await this.client.post<{ data: { id: string }; included: { type: string; id: string }[] }>(
             '/appCustomProductPages',
@@ -118,7 +172,43 @@ export class CppManager {
             (x) => x.type === 'appCustomProductPageLocalizations'
         )!.id;
 
-        // 2. Create screenshot set for iPhone 6.5"
+        if (!legacy) {
+            const target = { appCustomProductPageLocalizationId: localeId };
+            const uploaded: { id: string; state: string; specId: string }[] = [];
+            const createdPlacementIds: string[] = [];
+            try {
+                for (const file of allShots) {
+                    const image = await uploadImage(this.client, libraryId!, file);
+                    uploaded.push({ id: image.id, state: image.state, specId: image.specId });
+                    validateGroup(reference, 'APP_SCREENSHOT', placementGroup, image.specId);
+                }
+                for (const image of uploaded) {
+                    const placed = await this.client.post<{ data: { id: string } }>('/appAssetLibraryPlacements', placementBody(image.id, target, 'APP_SCREENSHOT', placementGroup));
+                    createdPlacementIds.push(placed.data.id);
+                }
+                await this.client.post('/appAssetLibraryPlacementOrderingRequests', orderBody(createdPlacementIds, target, placementGroup));
+            } catch (error) {
+                // Roll back so a failed upload does not leave a half-built CPP behind.
+                const leftovers: string[] = [];
+                try {
+                    await detachCppPlacements(this.client, cppId);
+                    await this.client.delete(`/appCustomProductPages/${encodeURIComponent(cppId)}`);
+                } catch {
+                    leftovers.push(`CPP ${cppId}`);
+                }
+                for (const image of uploaded) {
+                    try { await this.client.delete(`/appAssetLibraryImages/${encodeURIComponent(image.id)}`); }
+                    catch { leftovers.push(`image ${image.id}`); }
+                }
+                const reason = error instanceof Error ? error.message : String(error);
+                const note = leftovers.length ? `；回滚未清干净: ${leftovers.join(', ')}` : '；已回滚 CPP 与已上传图片（上传中断的图片可能留在素材库，可用 asset-library images 查 AWAITING_UPLOAD）';
+                throw new Error(`CPP 截图上传失败: ${reason}${note}`);
+            }
+            return { cppId, localeId, screenshotsUploaded: uploaded.length, uploaded, createdPlacementIds,
+                url: `https://apps.apple.com/us/app/id${this.appId}?ppid=${cppId}` };
+        }
+
+        // Deprecated screenshot-set flow, only when explicitly requested.
         const setResp = await this.client.post<{ data: { id: string } }>(
             '/appScreenshotSets',
             {
@@ -136,7 +226,6 @@ export class CppManager {
         const screenshotSetId = setResp.data.id;
 
         // 3. Upload CPP image as #1, then template shots as #2-8
-        const allShots = [cppImagePath, ...templateShotPaths];
         let uploaded = 0;
 
         for (const shotPath of allShots) {

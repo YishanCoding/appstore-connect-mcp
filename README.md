@@ -39,6 +39,9 @@ A Model Context Protocol (MCP) server for interacting with Apple's App Store Con
 - List per-app images, reference data, and version or custom product page placements
 - Upload images once, place them on localizations, and order screenshots by placement group
 - `ascli screenshot upload` uses App Asset Library by default; legacy screenshot sets require `--legacy`
+- `ascli cpp create` uploads CPP screenshots as library placements, with a reference-validated group and count; `--legacy` retains deprecated screenshot sets
+- `ascli screenshot upload --app-custom-product-page-localization-id <id>` appends or replaces screenshots on an existing CPP localization
+- `ACCESS_TO_REPORTS` is deprecated and rejected by user invite and role update commands
 
 See [CLI usage](docs/cli-usage.md#app-asset-library-截图流程asc-api-451) for commands and dry-run examples.
 

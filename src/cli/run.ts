@@ -77,7 +77,8 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
         }
 
         toolName = entry.tool.name;
-        if (toolName === 'appstore_list_screenshot_sets' || toolName === 'appstore_delete_screenshot_set' || (toolName === 'appstore_upload_screenshots' && parsed.flags.legacy)) {
+        if (toolName === 'appstore_list_screenshot_sets' || toolName === 'appstore_delete_screenshot_set'
+            || ((toolName === 'appstore_upload_screenshots' || toolName === 'appstore_create_cpp') && parsed.flags.legacy)) {
             verbose.push('deprecated: screenshot-set API 已弃用；请改用 asset-library 和 placement 命令。\n');
         }
         const envelope = dataEnvelope(parsed.body);
@@ -339,7 +340,7 @@ function coerce(field: z.ZodType, value: unknown): unknown {
     if (value.trim() !== '' && Number.isFinite(numeric) && field.safeParse(numeric).success) return numeric;
     try {
         const json = JSON.parse(value);
-        if (field.safeParse(json).success) return json;
+        if (field.safeParse(json).success || Array.isArray(json)) return json;
     } catch {
         // keep the original string
     }

@@ -51,18 +51,21 @@ export function registerCppTools(server: McpServer) {
                 'Create a Custom Product Page (CPP) and upload screenshots to App Store Connect.',
                 'Screenshot order: cppImagePath is uploaded as #1 (landscape hero), then templateShotPaths as #2-8.',
                 'promotionalText must be ≤170 characters.',
-                'screenshotDisplayType defaults to APP_IPHONE_65 (6.5" iPhone, 2688×1242 landscape).',
-                'Bypasses system proxy for S3 chunk uploads automatically.',
+                'Uses App Asset Library placements by default; --legacy uses deprecated screenshot sets.',
+                'placementGroup defaults to IPHONE_FACE_ID_LARGE_PROFILE (former APP_IPHONE_65).',
             ].join(' '),
             inputSchema: z.object({
                 appId: z.string().describe('App ID (numeric)'),
                 name: z.string().describe('CPP name shown in ASC (e.g. "JuJuBit - Dark Hero")'),
-                promotionalText: z.string().max(170).describe('Promotional text for en-US locale (≤170 chars)'),
+                promotionalText: z.string().max(170).describe('Promotional text for the CPP locale (≤170 chars)'),
+                locale: z.string().optional().describe("CPP locale; defaults to the app's primary locale and must exist on the app store version"),
                 cppImagePath: z.string().describe('Absolute path to the landscape CPP hero image (uploaded as screenshot #1)'),
                 templateShotPaths: z.array(z.string()).min(1).max(10).describe('Absolute paths to the remaining screenshots (uploaded as #2 onward, typically 7 portrait shots)'),
+                placementGroup: z.string().optional().describe('App Asset Library placement group from reference data'),
+                legacy: z.boolean().optional().default(false).describe('Use deprecated screenshot-set API'),
             }),
         },
-        async ({ appId, name, promotionalText, cppImagePath, templateShotPaths }) => {
+        async ({ appId, name, promotionalText, cppImagePath, templateShotPaths, placementGroup, legacy, locale }) => {
             const client = makeClient();
             if (!client) return noCredentials();
             try {
@@ -70,7 +73,10 @@ export function registerCppTools(server: McpServer) {
                     name,
                     promotionalText,
                     cppImagePath,
-                    templateShotPaths
+                    templateShotPaths,
+                    placementGroup,
+                    legacy,
+                    locale
                 );
                 return {
                     content: [{
