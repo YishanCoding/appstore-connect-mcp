@@ -579,7 +579,7 @@ function creativeOwnershipSteps(ctx: Ctx, target: ReturnType<typeof targetOf>) {
 }
 
 async function existingCreative(client: AppStoreConnectClient, path: string, placementType: string) {
-    const items = await client.getAllPages<any>(path, { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP });
+    const items = await client.getAllPages<any>(path, { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP, include: 'image' });
     if (items.length > 1) throw new CliUsage(`${placementType} 返回多个 placement，拒绝自动修改`);
     return items[0];
 }
@@ -610,7 +610,7 @@ async function setCreativeAsset(ctx: Ctx, args: Record<string, any>) {
         creativeOwnershipSteps(ctx, target);
         ctx.steps.push({ method: 'GET', path: '/apps/{appId}/assetLibrary', body: null });
         ctx.steps.push({ method: 'GET', path: '/appAssetLibraryRefData', body: null });
-        ctx.steps.push({ method: 'GET', path, params: { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP }, body: null,
+        ctx.steps.push({ method: 'GET', path, params: { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP, include: 'image' }, body: null,
             note: args.replaceExisting ? '确认旧 placement，准备替换' : '若已有 placement，立即报错且不上传' });
         if (args.deleteOldImage) ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{oldImageId}/placements', body: null,
             note: '预检旧图只用于当前 placement；有其他引用则在上传前拒绝' });
@@ -665,7 +665,7 @@ async function removeCreativeAsset(ctx: Ctx, args: Record<string, any>) {
     const { target, placementType, path } = creativeTarget(args);
     if (!ctx.execute) {
         creativeOwnershipSteps(ctx, target);
-        ctx.steps.push({ method: 'GET', path, params: { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP }, body: null });
+        ctx.steps.push({ method: 'GET', path, params: { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP, include: 'image' }, body: null });
         if (args.deleteImage) ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{imageId}/placements', body: null,
             note: '预检图片只用于当前 placement；有其他引用则不删除 placement' });
         ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryPlacements/{existingId}', body: null, note: '先删 placement，避免 CPP 删除后 INACTIVE 无法删除' });

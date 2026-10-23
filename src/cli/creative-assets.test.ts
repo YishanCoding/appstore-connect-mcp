@@ -31,7 +31,8 @@ function creativeMock(sink: string, options: { previous?: boolean; spec?: string
         if (call.url === '/appAssetLibraryRefData') return ok([{ id: 'ref', attributes: reference }]);
         if (call.url === '/appStoreVersionLocalizations/LOC/placements') return ok(options.previous ? [{
             id: 'OLD', attributes: { placementType: 'PRODUCT_PAGE_HEADER_ASSET', state: 'ACTIVE' },
-            relationships: { image: { data: { id: 'OLD-IMAGE' } } },
+            // Apple only returns relationship data when include=image is requested.
+            ...(String(call.params?.include ?? '').split(',').includes('image') ? { relationships: { image: { data: { id: 'OLD-IMAGE' } } } } : {}),
         }] : []);
         if (call.url === '/appAssetLibraryImages' && call.method === 'POST') return ok({ id: 'NEW', attributes: {
             uploadOperations: [{ method: 'PUT', url: `${sink}/upload` }],
