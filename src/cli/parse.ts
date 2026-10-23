@@ -34,7 +34,7 @@ const VALUE_GLOBALS = new Set([
     'file',
     'profile',
 ]);
-const BOOL_GLOBALS = new Set(['all', 'yes', 'verbose', 'help', 'json']);
+const BOOL_GLOBALS = new Set(['all', 'yes', 'verbose', 'help', 'json', 'legacy']);
 
 export function kebabToCamel(value: string): string {
     return value.replace(/-([a-zA-Z0-9])/g, (_, char: string) => char.toUpperCase());
@@ -81,6 +81,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
             if (rawName === 'verbose') parsed.verbose = true;
             if (rawName === 'help') parsed.help = true;
             if (rawName === 'json') parsed.json = true;
+            if (rawName === 'legacy') parsed.flags.legacy = true;
             continue;
         }
 

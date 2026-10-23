@@ -10,6 +10,7 @@ import {
 } from '../mcp/tools/versions/screenshots.js';
 import { CliUsage } from './output.js';
 import type { HttpMethod } from './meta.js';
+import { commitImageBody, getReference, libraryIdForApp, orderBody, placementBody, reserveImageBody, targetOf, uploadImage, validateGroup } from '../programs/assets/library.js';
 
 export interface Step {
     method: HttpMethod | 'PUT';
@@ -224,7 +225,18 @@ async function dispatch(ctx: Ctx, name: string, args: Record<string, any>): Prom
                 return write(ctx, 'PATCH', `/appInfoLocalizations/${enc(appInfoLocalizationId)}`, patchBody('appInfoLocalizations', appInfoLocalizationId, pick(fields, APP_INFO_FIELDS)));
             }, (update) => update.appInfoLocalizationId);
         case 'appstore_upload_screenshots':
-            return uploadScreenshots(ctx, args);
+            return args.legacy ? uploadScreenshots(ctx, args) : uploadLibraryScreenshots(ctx, args);
+        case 'appstore_upload_asset_library_image':
+            return uploadLibraryImage(ctx, args);
+        case 'appstore_create_asset_placement':
+            return createAssetPlacement(ctx, args);
+        case 'appstore_order_asset_placements':
+            return orderAssetPlacements(ctx, args);
+        case 'appstore_delete_asset_placement':
+            await write(ctx, 'DELETE', `/appAssetLibraryPlacements/${enc(args.placementId)}`, null);
+            return { success: true, placementId: args.placementId };
+        case 'appstore_delete_asset_library_image':
+            return deleteLibraryImage(ctx, args.imageId);
         case 'appstore_delete_screenshot_set':
             return deleteScreenshotSet(ctx, args.screenshotSetId);
         case 'appstore_create_cpp':
@@ -371,7 +383,159 @@ async function deleteScreenshotSet(ctx: Ctx, screenshotSetId: string) {
     return { success: true, screenshotSetId, deletedScreenshots: screenshotIds.length };
 }
 
+async function uploadLibraryImage(ctx: Ctx, args: Record<string, any>) {
+    if (!ctx.execute) {
+        ctx.steps.push({ method: 'GET', path: `/apps/${enc(args.appId)}/assetLibrary`, body: null });
+        ctx.steps.push({ method: 'POST', path: '/appAssetLibraryImages', body: reserveImageBody('{assetLibraryId}', args.file, args.category) });
+        ctx.steps.push(plannedUploadStep());
+        ctx.steps.push({ method: 'PATCH', path: '/appAssetLibraryImages/{reservedId}', body: commitImageBody('{reservedId}') });
+        ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{reservedId}', body: null, note: '轮询直到 specId 和终态可用' });
+        return;
+    }
+    const libraryId = await libraryIdForApp(ctx.client!, args.appId);
+    return uploadImage(ctx.client!, libraryId, args.file, args.category);
+}
+
+async function appForTarget(client: AppStoreConnectClient, args: Record<string, any>): Promise<string> {
+    const t = targetOf(args);
+    if (t.key === 'appStoreVersionLocalization') {
+        const loc = await client.get<any>(`/appStoreVersionLocalizations/${enc(t.id)}`, { include: 'appStoreVersion' });
+        const versionId = loc.data?.relationships?.appStoreVersion?.data?.id;
+        if (!versionId) throw new CliUsage('版本本地化没有 appStoreVersion 关系');
+        const version = await client.get<any>(`/appStoreVersions/${enc(versionId)}`, { include: 'app' });
+        const appId = version.data?.relationships?.app?.data?.id;
+        if (!appId) throw new CliUsage('版本没有 app 关系');
+        return appId;
+    }
+    const loc = await client.get<any>(`/appCustomProductPageLocalizations/${enc(t.id)}`, { include: 'appCustomProductPageVersion' });
+    const versionId = loc.data?.relationships?.appCustomProductPageVersion?.data?.id;
+    if (!versionId) throw new CliUsage('CPP 本地化没有版本关系');
+    const version = await client.get<any>(`/appCustomProductPageVersions/${enc(versionId)}`, { include: 'appCustomProductPage' });
+    const cppId = version.data?.relationships?.appCustomProductPage?.data?.id;
+    const cpp = await client.get<any>(`/appCustomProductPages/${enc(cppId)}`, { include: 'app' });
+    const appId = cpp.data?.relationships?.app?.data?.id;
+    if (!appId) throw new CliUsage('CPP 没有 app 关系');
+    return appId;
+}
+
+async function createAssetPlacement(ctx: Ctx, args: Record<string, any>) {
+    const body = placementBody(args.imageId, args, args.placementType, args.placementGroup);
+    if (!ctx.execute) {
+        ctx.steps.push({ method: 'GET', path: '/appAssetLibraryRefData', body: null });
+        ctx.steps.push({ method: 'GET', path: `/appAssetLibraryImages/${enc(args.imageId)}`, body: null });
+        ctx.steps.push({ method: 'POST', path: '/appAssetLibraryPlacements', body });
+        return;
+    }
+    const appId = await appForTarget(ctx.client!, args);
+    const libraryId = await libraryIdForApp(ctx.client!, appId);
+    const owned = await ctx.client!.get<any>(`/appAssetLibraries/${enc(libraryId)}/images`, { 'filter[id]': args.imageId, limit: 1 });
+    if (!owned.data?.some((item: any) => item.id === args.imageId)) throw new CliUsage(`图片 ${args.imageId} 不属于目标 app ${appId}`);
+    const image = await ctx.client!.get<any>(`/appAssetLibraryImages/${enc(args.imageId)}`);
+    const reference = await getReference(ctx.client!);
+    const specId = image.data?.attributes?.specId;
+    if (!specId) throw new CliUsage(`图片 ${args.imageId} 尚未处理完成，没有 specId；请先查询状态`);
+    try { validateGroup(reference, args.placementType, args.placementGroup, specId); }
+    catch (error) { throw new CliUsage(error instanceof Error ? error.message : String(error)); }
+    if (!(reference.placementTypes ?? []).find((t: any) => t.placementTypeId === args.placementType)?.acceptsAssetCategories?.includes(image.data?.attributes?.category)) {
+        throw new CliUsage(`图片 category ${image.data?.attributes?.category} 不适用于 ${args.placementType}`);
+    }
+    const result = await write(ctx, 'POST', '/appAssetLibraryPlacements', body);
+    return result?.data ?? result;
+}
+
+async function orderAssetPlacements(ctx: Ctx, args: Record<string, any>) {
+    const body = orderBody(args.placementIds, args, args.placementGroup);
+    if (!ctx.execute) {
+        ctx.steps.push({ method: 'GET', path: '/appAssetLibraryRefData', body: null });
+        ctx.steps.push({ method: 'POST', path: '/appAssetLibraryPlacementOrderingRequests', body });
+        return;
+    }
+    const reference = await getReference(ctx.client!);
+    if (!(reference.placementProfileGroups ?? []).some((g: any) => g.placementProfileGroupId === args.placementGroup)) {
+        throw new CliUsage(`无效 placementGroup: ${args.placementGroup}；合法值: ${(reference.placementProfileGroups ?? []).map((g: any) => g.placementProfileGroupId).join(', ')}`);
+    }
+    const target = targetOf(args);
+    for (const placementId of args.placementIds) {
+        const item = await ctx.client!.get<any>(`/appAssetLibraryPlacements/${enc(placementId)}`, { include: target.key });
+        if (item.data?.relationships?.[target.key]?.data?.id !== target.id || item.data?.attributes?.placementGroup !== args.placementGroup) {
+            throw new CliUsage(`placement ${placementId} 不属于目标本地化和 group`);
+        }
+    }
+    const result = await write(ctx, 'POST', '/appAssetLibraryPlacementOrderingRequests', body);
+    return result?.data ?? result;
+}
+
+async function deleteLibraryImage(ctx: Ctx, imageId: string) {
+    const path = `/appAssetLibraryImages/${enc(imageId)}/placements`;
+    if (!ctx.execute) {
+        ctx.steps.push({ method: 'GET', path, body: null, note: '必须为空才能删除图片' });
+        ctx.steps.push({ method: 'DELETE', path: `/appAssetLibraryImages/${enc(imageId)}`, body: null });
+        return;
+    }
+    const placements = await ctx.client!.getAllPages<any>(path, {}, { limit: 1 });
+    if (placements.length) throw new CliUsage(`图片 ${imageId} 仍有 placement；先用 placement delete 删除，再删图片`);
+    await write(ctx, 'DELETE', `/appAssetLibraryImages/${enc(imageId)}`, null);
+    return { success: true, imageId };
+}
+
+async function uploadLibraryScreenshots(ctx: Ctx, args: Record<string, any>) {
+    if (args.screenshotDisplayType) throw new CliUsage('旧 display type 只支持 --legacy；请使用 asset-library reference 选择 --placement-group');
+    if (!args.placementGroup) throw new CliUsage('新截图流程需要 --placement-group；用 asset-library reference 查看合法值');
+    const locId = args.appStoreVersionLocalizationId;
+    const target = { appStoreVersionLocalizationId: locId };
+    const path = `/appStoreVersionLocalizations/${enc(locId)}/placements`;
+    if (!ctx.execute) {
+        ctx.steps.push({ method: 'GET', path: `/appStoreVersionLocalizations/${enc(locId)}`, body: null, params: { include: 'appStoreVersion' } });
+        ctx.steps.push({ method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', body: null, params: { include: 'app' } });
+        ctx.steps.push({ method: 'GET', path: '/apps/{appId}/assetLibrary', body: null });
+        ctx.steps.push({ method: 'GET', path: '/appAssetLibraryRefData', body: null });
+        ctx.steps.push({ method: 'GET', path, body: null, params: { 'filter[placementType]': 'APP_SCREENSHOT', 'filter[placementGroup]': args.placementGroup, sort: 'placementGroupPosition' } });
+        if (args.replaceExisting) ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryPlacements/{existingId}', body: null, note: '每个现有 placement' });
+        for (const file of args.imagePaths) {
+            ctx.steps.push({ method: 'POST', path: '/appAssetLibraryImages', body: reserveImageBody('{assetLibraryId}', file) });
+            ctx.steps.push(plannedUploadStep());
+            ctx.steps.push({ method: 'PATCH', path: '/appAssetLibraryImages/{reservedId}', body: commitImageBody('{reservedId}') });
+            ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{reservedId}', body: null, note: '轮询直到处理完成' });
+            ctx.steps.push({ method: 'POST', path: '/appAssetLibraryPlacements', body: placementBody('{reservedId}', target, 'APP_SCREENSHOT', args.placementGroup) });
+        }
+        ctx.steps.push({ method: 'POST', path: '/appAssetLibraryPlacementOrderingRequests', body: orderBody(['{existingOrCreatedPlacementIds}'], target, args.placementGroup) });
+        return;
+    }
+    const appId = await appForTarget(ctx.client!, target);
+    if (args.appId && args.appId !== appId) throw new CliUsage(`--app-id ${args.appId} 与本地化所属 app ${appId} 不一致`);
+    const libraryId = await libraryIdForApp(ctx.client!, appId);
+    const reference = await getReference(ctx.client!);
+    try { validateGroup(reference, 'APP_SCREENSHOT', args.placementGroup); }
+    catch (error) { throw new CliUsage(error instanceof Error ? error.message : String(error)); }
+    const existing = await ctx.client!.getAllPages<any>(path, { 'filter[placementType]': 'APP_SCREENSHOT', 'filter[placementGroup]': args.placementGroup, sort: 'placementGroupPosition' });
+    const policy = (reference.features ?? []).find((feature: any) => feature.featureId === 'APP_STORE_VERSIONS')
+        ?.placementPolicies?.find((item: any) => item.placementType === 'APP_SCREENSHOT');
+    const maxCount = policy?.groupLimits?.find((limit: any) => limit.groupIds?.includes(args.placementGroup))?.maxCount;
+    const targetCount = (args.replaceExisting ? 0 : existing.length) + args.imagePaths.length;
+    if (typeof maxCount === 'number' && targetCount > maxCount) {
+        throw new CliUsage(`该 group 最多 ${maxCount} 张截图；当前 ${existing.length} 张，本次 ${args.imagePaths.length} 张。可使用 --replace-existing true`);
+    }
+    const ids: string[] = args.replaceExisting ? [] : existing.map((item) => item.id);
+    const uploaded: { id: string; state: string; specId: string }[] = [];
+    for (const file of args.imagePaths) {
+        const image = await uploadImage(ctx.client!, libraryId, file);
+        try { validateGroup(reference, 'APP_SCREENSHOT', args.placementGroup, image.specId); }
+        catch (error) { throw new CliUsage(error instanceof Error ? error.message : String(error)); }
+        uploaded.push({ id: image.id, state: image.state, specId: image.specId });
+    }
+    if (args.replaceExisting) for (const item of existing) await ctx.client!.delete(`/appAssetLibraryPlacements/${enc(item.id)}`);
+    const createdPlacementIds: string[] = [];
+    for (const image of uploaded) {
+        const created = await ctx.client!.post<any>('/appAssetLibraryPlacements', placementBody(image.id, target, 'APP_SCREENSHOT', args.placementGroup));
+        ids.push(created.data.id);
+        createdPlacementIds.push(created.data.id);
+    }
+    await ctx.client!.post('/appAssetLibraryPlacementOrderingRequests', orderBody(ids, target, args.placementGroup));
+    return { success: true, appId, uploaded, createdPlacementIds, orderedPlacementIds: ids, placementGroup: args.placementGroup };
+}
+
 async function uploadScreenshots(ctx: Ctx, args: Record<string, any>) {
+    if (!args.screenshotDisplayType) throw new CliUsage('--legacy 需要 --screenshot-display-type');
     const imagePaths = (args.imagePaths ?? []) as string[];
     try {
         assertReadableFiles(imagePaths);
@@ -413,8 +577,10 @@ async function uploadScreenshots(ctx: Ctx, args: Record<string, any>) {
 }
 
 export function assertWriteInputs(name: string, args: Record<string, unknown>): void {
-    if (name === 'appstore_upload_screenshots') {
-        const paths = Array.isArray(args.imagePaths) ? args.imagePaths.filter((item): item is string => typeof item === 'string') : [];
+    if (name === 'appstore_upload_screenshots' || name === 'appstore_upload_asset_library_image') {
+        const paths = name === 'appstore_upload_asset_library_image'
+            ? [args.file].filter((item): item is string => typeof item === 'string')
+            : Array.isArray(args.imagePaths) ? args.imagePaths.filter((item): item is string => typeof item === 'string') : [];
         try {
             assertReadableFiles(paths);
         } catch (error) {
@@ -509,7 +675,7 @@ async function runBatch(
 }
 
 export function writeNeedsRead(name: string, args: Record<string, unknown>): boolean {
-    if (name === 'appstore_upload_screenshots') return args.replaceExisting !== false;
+    if (name === 'appstore_upload_screenshots') return args.legacy === true && args.replaceExisting !== false;
     return new Set([
         'appstore_respond_to_review',
         'appstore_delete_review_response',

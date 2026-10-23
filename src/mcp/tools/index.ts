@@ -11,6 +11,7 @@ import { registerAnalyticsTools } from './analytics/index.js';
 import { registerCppTools } from './cpp/index.js';
 import { registerEventsTools } from './events/index.js';
 import { registerIapTools } from './iap/index.js';
+import { registerAssetTools } from './assets/index.js';
 
 export interface CollectedTool {
     name: string;
@@ -51,6 +52,7 @@ export function registerAllTools(server: McpServer): CollectedTool[] {
     registerCppTools(server);
     registerEventsTools(server);
     registerIapTools(server);
+    registerAssetTools(server);
     return collected;
 }
 
