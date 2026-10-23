@@ -18,6 +18,41 @@ features: [{ featureId: 'APP_STORE_VERSIONS', placementPolicies: [{ placementTyp
 function ok(data: unknown, status = 200): HttpResult { return { status, headers: {}, data: { data } }; }
 
 describe('App Asset Library 4.5.1', () => {
+    test('CPP create rolls back the CPP and uploaded images when placement fails', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'cpp-rollback-'));
+        const file = join(dir, 'hero.png');
+        const extra = join(dir, 'extra.png');
+        writeFileSync(file, 'image');
+        writeFileSync(extra, 'image-2');
+        let image = 0;
+        const sink = await startUploadSink();
+        const calls: HttpCall[] = [];
+        const transport = { async send(call: HttpCall): Promise<HttpResult> {
+            calls.push(call);
+            if (call.url === '/appAssetLibraryRefData') return ok([{ id: 'ref', attributes: reference }]);
+            if (call.url === '/apps/APP/assetLibrary') return ok({ id: 'LIB' });
+            if (call.url === '/apps/APP') return ok({ id: 'APP', attributes: { primaryLocale: 'zh-Hans' } });
+            if (call.url === '/appCustomProductPages') return { status: 201, headers: {}, data: { data: { id: 'CPP' }, included: [{ type: 'appCustomProductPageLocalizations', id: 'LOC' }] } };
+            if (call.url === '/appAssetLibraryImages' && call.method === 'POST') return ok({ id: `IMAGE-${++image}`, attributes: { uploadOperations: [{ method: 'PUT', url: `${sink.url}/${image}` }] } }, 201);
+            if (/^\/appAssetLibraryImages\/IMAGE-\d$/.test(call.url) && call.method === 'PATCH') return ok({ id: call.url.split('/').at(-1) });
+            if (/^\/appAssetLibraryImages\/IMAGE-\d$/.test(call.url) && call.method === 'GET') return ok({ id: call.url.split('/').at(-1), attributes: { state: 'PREPARE_FOR_SUBMISSION', specId: 'spec-1' } });
+            if (call.url === '/appAssetLibraryPlacements') return { status: 500, headers: {}, data: { errors: [{ status: '500', code: 'BOOM', title: 'boom' }] } };
+            if (call.url === '/appCustomProductPages/CPP/appCustomProductPageVersions') return ok([]);
+            if (call.method === 'DELETE') return { status: 204, headers: {}, data: undefined };
+            throw new Error(`unexpected ${call.method} ${call.url}`);
+        } };
+        try {
+            const result = await runCli(['cpp', 'create', '--app-id', 'APP', '--name', 'Hero', '--promotional-text', 'hi',
+                '--cpp-image-path', file, '--template-shot-paths', JSON.stringify([extra]), '--placement-group', group, '--yes'], { env, transport });
+            expect(result.code).not.toBe(0);
+            expect(result.stderr).toContain('已回滚');
+            const deletes = calls.filter((call) => call.method === 'DELETE').map((call) => call.url);
+            expect(deletes).toContain('/appCustomProductPages/CPP');
+            expect(deletes).toContain('/appAssetLibraryImages/IMAGE-1');
+            expect(deletes).toContain('/appAssetLibraryImages/IMAGE-2');
+        } finally { await sink.stop(); }
+    });
+
     test('CPP create preflights reference data, then uploads, places and orders screenshots', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'cpp-library-'));
         const files = [join(dir, 'hero.png'), join(dir, 'extra.png')];
@@ -47,6 +82,7 @@ describe('App Asset Library 4.5.1', () => {
             if (invalid) return invalid;
             if (call.url === '/appAssetLibraryRefData') return ok([{ id: 'ref', attributes: reference }]);
             if (call.url === '/apps/APP/assetLibrary') return ok({ id: 'LIB' });
+            if (call.url === '/apps/APP') return ok({ id: 'APP', attributes: { primaryLocale: 'zh-Hans' } });
             if (call.url === '/appCustomProductPages') return { status: 201, headers: {}, data: { data: { id: 'CPP' }, included: [{ type: 'appCustomProductPageLocalizations', id: 'LOC' }] } };
             if (call.url === '/appAssetLibraryImages' && call.method === 'POST') return ok({ id: `IMAGE-${++image}`, attributes: { uploadOperations: [{ method: 'PUT', url: `${sink.url}/${image}` }] } }, 201);
             if (/^\/appAssetLibraryImages\/IMAGE-\d+$/.test(call.url) && call.method === 'PATCH') return ok({ id: call.url.split('/').at(-1) });
@@ -62,6 +98,8 @@ describe('App Asset Library 4.5.1', () => {
             expect(data.createdPlacementIds).toEqual(['P-1', 'P-2']);
             expect(data.uploaded.map((item: any) => item.id)).toEqual(['IMAGE-1', 'IMAGE-2']);
             expect(data.screenshotSetId).toBeUndefined();
+            const created = calls.find((call) => call.url === '/appCustomProductPages')?.data as any;
+            expect(created.included[1].attributes.locale).toBe('zh-Hans');
             expect(sink.puts.map((item) => item.body)).toEqual(['image-0', 'image-1']);
             expect(calls.findIndex((call) => call.url === '/appAssetLibraryRefData')).toBeLessThan(calls.findIndex((call) => call.url === '/appCustomProductPages'));
             const order = calls.find((call) => call.url === '/appAssetLibraryPlacementOrderingRequests')!;

@@ -1,6 +1,6 @@
 import { AppStoreConnectClient } from '../programs/api-client/client.js';
 import { AscHttpError } from '../programs/api-client/policy.js';
-import { buildCppCreateBody, CppManager } from '../programs/cpp/index.js';
+import { buildCppCreateBody, CppManager, detachCppPlacements } from '../programs/cpp/index.js';
 import { CppPreflightError } from '../programs/cpp/cpp-manager.js';
 import {
     assertReadableFiles,
@@ -247,9 +247,19 @@ async function dispatch(ctx: Ctx, name: string, args: Record<string, any>): Prom
             const response = await write(ctx, 'PATCH', `/appCustomProductPageLocalizations/${enc(args.localeId)}`, body);
             return response?.data ?? response;
         }
-        case 'appstore_delete_cpp':
+        case 'appstore_delete_cpp': {
+            if (!ctx.execute) {
+                ctx.steps.push({ method: 'GET', path: `/appCustomProductPages/${enc(args.cppId)}/appCustomProductPageVersions`, body: null });
+                ctx.steps.push({ method: 'GET', path: '/appCustomProductPageVersions/{versionId}/appCustomProductPageLocalizations', body: null });
+                ctx.steps.push({ method: 'GET', path: '/appCustomProductPageLocalizations/{localizationId}/placements', body: null });
+                ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryPlacements/{placementId}', body: null, note: '先删 placement：CPP 删除后残留的 INACTIVE placement 无法再删，图片会卡在素材库' });
+                await write(ctx, 'DELETE', `/appCustomProductPages/${enc(args.cppId)}`, null);
+                return;
+            }
+            const detachedPlacementIds = await detachCppPlacements(ctx.client!, args.cppId);
             await write(ctx, 'DELETE', `/appCustomProductPages/${enc(args.cppId)}`, null);
-            return { success: true, deleted: args.cppId };
+            return { success: true, deleted: args.cppId, detachedPlacementIds };
+        }
         case 'appstore_create_event': {
             const body = createBody('appEvents', pick(args, EVENT_FIELDS), { key: 'app', type: 'apps', id: args.appId });
             const response = await write(ctx, 'POST', '/appEvents', body);
@@ -618,7 +628,7 @@ async function createCpp(ctx: Ctx, args: Record<string, any>) {
     if (typeof args.promotionalText === 'string' && args.promotionalText.length > 170) {
         throw new CliUsage(`promotionalText exceeds 170 chars (${args.promotionalText.length})`);
     }
-    const body = buildCppCreateBody(args.appId, args.name, args.promotionalText);
+    const body = buildCppCreateBody(args.appId, args.name, args.promotionalText, args.locale ?? '{appPrimaryLocale}');
     if (!ctx.execute) {
         if (!args.legacy) {
             const group = args.placementGroup ?? 'IPHONE_FACE_ID_LARGE_PROFILE';
@@ -658,7 +668,7 @@ async function createCpp(ctx: Ctx, args: Record<string, any>) {
     }
     if (!ctx.client) throw new CliUsage('没有可用的客户端');
     try {
-        return await new CppManager(ctx.client, args.appId).createCpp(args.name, args.promotionalText, args.cppImagePath, args.templateShotPaths ?? [], args.placementGroup, args.legacy);
+        return await new CppManager(ctx.client, args.appId).createCpp(args.name, args.promotionalText, args.cppImagePath, args.templateShotPaths ?? [], args.placementGroup, args.legacy, args.locale);
     } catch (error) {
         if (error instanceof CppPreflightError) throw new CliUsage(error.message);
         throw error;

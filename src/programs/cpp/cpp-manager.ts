@@ -18,7 +18,28 @@ const s3Client = axios.create({ proxy: false });
 
 export class CppPreflightError extends Error {}
 
-export function buildCppCreateBody(appId: string, name: string, promotionalText: string) {
+/**
+ * Deleting a CPP turns its asset placements INACTIVE with no localization; Apple then answers
+ * DELETE on them with 204 but keeps them, so their images can never be deleted. Remove the
+ * placements while the CPP still exists.
+ */
+export async function detachCppPlacements(client: AppStoreConnectClient, cppId: string): Promise<string[]> {
+    const removed: string[] = [];
+    const versions = await client.getAllPages<any>(`/appCustomProductPages/${encodeURIComponent(cppId)}/appCustomProductPageVersions`);
+    for (const version of versions) {
+        const locs = await client.getAllPages<any>(`/appCustomProductPageVersions/${encodeURIComponent(version.id)}/appCustomProductPageLocalizations`);
+        for (const loc of locs) {
+            const placements = await client.getAllPages<any>(`/appCustomProductPageLocalizations/${encodeURIComponent(loc.id)}/placements`);
+            for (const placement of placements) {
+                await client.delete(`/appAssetLibraryPlacements/${encodeURIComponent(placement.id)}`);
+                removed.push(placement.id);
+            }
+        }
+    }
+    return removed;
+}
+
+export function buildCppCreateBody(appId: string, name: string, promotionalText: string, locale = 'en-US') {
     return {
         data: {
             type: 'appCustomProductPages',
@@ -43,7 +64,7 @@ export function buildCppCreateBody(appId: string, name: string, promotionalText:
             {
                 type: 'appCustomProductPageLocalizations',
                 id: '${loc1}',
-                attributes: { locale: 'en-US', promotionalText },
+                attributes: { locale, promotionalText },
             },
         ],
     };
@@ -78,6 +99,7 @@ export class CppManager {
     }
 
     public async deleteCpp(cppId: string): Promise<void> {
+        await detachCppPlacements(this.client, cppId);
         await this.client.delete(`/appCustomProductPages/${cppId}`);
     }
 
@@ -105,7 +127,8 @@ export class CppManager {
         cppImagePath: string,
         templateShotPaths: string[],
         placementGroup = 'IPHONE_FACE_ID_LARGE_PROFILE',
-        legacy = false
+        legacy = false,
+        locale?: string
     ): Promise<CreateCppResult> {
         if (promotionalText.length > 170) {
             throw new Error(`promotionalText exceeds 170 chars (${promotionalText.length})`);
@@ -135,7 +158,9 @@ export class CppManager {
             }
             libraryId = await libraryIdForApp(this.client, this.appId);
         }
-        const createBody = buildCppCreateBody(this.appId, name, promotionalText);
+        // The CPP locale must exist on the app's store version, so default to the app's primary locale.
+        const cppLocale = locale ?? (await this.client.get<any>(`/apps/${encodeURIComponent(this.appId)}`)).data?.attributes?.primaryLocale ?? 'en-US';
+        const createBody = buildCppCreateBody(this.appId, name, promotionalText, cppLocale);
 
         const createResp = await this.client.post<{ data: { id: string }; included: { type: string; id: string }[] }>(
             '/appCustomProductPages',
@@ -150,17 +175,35 @@ export class CppManager {
         if (!legacy) {
             const target = { appCustomProductPageLocalizationId: localeId };
             const uploaded: { id: string; state: string; specId: string }[] = [];
-            for (const file of allShots) {
-                const image = await uploadImage(this.client, libraryId!, file);
-                validateGroup(reference, 'APP_SCREENSHOT', placementGroup, image.specId);
-                uploaded.push({ id: image.id, state: image.state, specId: image.specId });
-            }
             const createdPlacementIds: string[] = [];
-            for (const image of uploaded) {
-                const placed = await this.client.post<{ data: { id: string } }>('/appAssetLibraryPlacements', placementBody(image.id, target, 'APP_SCREENSHOT', placementGroup));
-                createdPlacementIds.push(placed.data.id);
+            try {
+                for (const file of allShots) {
+                    const image = await uploadImage(this.client, libraryId!, file);
+                    uploaded.push({ id: image.id, state: image.state, specId: image.specId });
+                    validateGroup(reference, 'APP_SCREENSHOT', placementGroup, image.specId);
+                }
+                for (const image of uploaded) {
+                    const placed = await this.client.post<{ data: { id: string } }>('/appAssetLibraryPlacements', placementBody(image.id, target, 'APP_SCREENSHOT', placementGroup));
+                    createdPlacementIds.push(placed.data.id);
+                }
+                await this.client.post('/appAssetLibraryPlacementOrderingRequests', orderBody(createdPlacementIds, target, placementGroup));
+            } catch (error) {
+                // Roll back so a failed upload does not leave a half-built CPP behind.
+                const leftovers: string[] = [];
+                try {
+                    await detachCppPlacements(this.client, cppId);
+                    await this.client.delete(`/appCustomProductPages/${encodeURIComponent(cppId)}`);
+                } catch {
+                    leftovers.push(`CPP ${cppId}`);
+                }
+                for (const image of uploaded) {
+                    try { await this.client.delete(`/appAssetLibraryImages/${encodeURIComponent(image.id)}`); }
+                    catch { leftovers.push(`image ${image.id}`); }
+                }
+                const reason = error instanceof Error ? error.message : String(error);
+                const note = leftovers.length ? `；回滚未清干净: ${leftovers.join(', ')}` : '；已回滚 CPP 与已上传图片（上传中断的图片可能留在素材库，可用 asset-library images 查 AWAITING_UPLOAD）';
+                throw new Error(`CPP 截图上传失败: ${reason}${note}`);
             }
-            await this.client.post('/appAssetLibraryPlacementOrderingRequests', orderBody(createdPlacementIds, target, placementGroup));
             return { cppId, localeId, screenshotsUploaded: uploaded.length, uploaded, createdPlacementIds,
                 url: `https://apps.apple.com/us/app/id${this.appId}?ppid=${cppId}` };
         }
