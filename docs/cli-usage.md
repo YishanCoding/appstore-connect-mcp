@@ -55,6 +55,32 @@ ascli smoke --output /tmp/ascli-smoke.json
 
 依据：[Review submissions](https://developer.apple.com/documentation/appstoreconnectapi/review-submissions)、[Review submission items](https://developer.apple.com/documentation/appstoreconnectapi/review-submission-items)。
 
+## 创意素材（Creative Assets，ASC API 4.5.1）
+
+`creative-asset` 处理产品页顶部横幅、搜索结果素材、活动卡片和活动详情图。目标本地化 ID 必须四选一：`--app-store-version-localization-id`、`--app-custom-product-page-localization-id`、`--app-event-localization-id`、`--app-store-version-experiment-treatment-localization-id`。`header`、`search` 适用于版本、CPP 和实验本地化；`event-card`、`event-details` 只适用于活动本地化。
+
+```bash
+ascli creative-asset list --app-store-version-localization-id <id>
+ascli creative-asset set --type header --file /path/header.png --app-store-version-localization-id <id>
+ascli creative-asset set --type search --file /path/search.jpg --app-custom-product-page-localization-id <id>
+ascli creative-asset set --type event-card --file /path/card.png --app-event-localization-id <id>
+ascli creative-asset set --type event-details --file /path/detail.png --app-event-localization-id <id>
+ascli creative-asset remove --type header --app-store-version-localization-id <id>
+```
+
+| 类型 | Apple placementType | 参考规格 |
+| --- | --- | --- |
+| `header` | `PRODUCT_PAGE_HEADER_ASSET` | 5244×2950 或 3840×1646；PNG，无 alpha |
+| `search` | `APP_STORE_SEARCH_RESULTS_ASSET` | 5244×2950 或 3:2、宽 1920–3840 |
+| `event-card` | `EVENT_CARD_ASSET` | 16:9、宽 1920–3840 |
+| `event-details` | `EVENT_DETAILS_PAGE_ASSET` | 9:16、高 1080–2160 |
+
+表格仅帮助准备文件；实际接受的规格以 Apple 运行时 `asset-library reference` 返回的 `specMappings` 和上传后的 `specId` 为准。命令使用 `CREATIVE_ASSETS` category 和 `DEFAULT_PROFILE` group，每个位置最多一张图。`list` 返回 placement 类型、状态、imageId、specId 和尺寸。
+
+`set` 默认 dry-run，显示归属检查、现有 placement 预检、上传、spec 校验、新建以及失败时的图片回滚。已有位置时，不带 `--replace-existing` 会在上传前报出旧 placementId。替换使用 `--replace-existing --yes --confirm <app-id>`：先删除旧 placement，再新建 placement；旧图默认留在素材库。`--delete-old-image` 与替换同用，仅在新 placement 建成且旧图不再被其他位置使用后删除旧图。新建失败会回滚新上传的图片；旧 placement 已删除时无法自动恢复。`remove` 总是高风险，执行时用 `--yes --confirm <app-id>`；`--delete-image` 会在删除 placement 后检查图片是否还被其他位置使用，再删图。
+
+删除 CPP 前先 `creative-asset remove` 清理它的 placement。Apple 会把 CPP 删除后残留的 placement 标为 `INACTIVE`，此时 placement 可能无法再删除。
+
 ## App Asset Library 截图流程（ASC API 4.5.1）
 
 先读运行时 reference data，再选 `placementGroup`。该值不是旧 `APP_IPHONE_67` 等 display type；旧值会报错。`reference` 返回 `placementProfileGroups`、`placementTypes` 和 `imageSpecs`，可按 `placementTypeId=APP_SCREENSHOT` 的 `specMappings` 查看每个 group 接受的规格。

@@ -46,7 +46,7 @@ describe('ascli', () => {
             description: string;
             reason?: string;
         }[];
-        expect(items.filter((item) => item.mcp_tool).length).toBe(74);
+        expect(items.filter((item) => item.mcp_tool).length).toBe(77);
         for (const item of items) {
             expect(item.kind === 'read' || item.kind === 'write').toBe(true);
             expect(item.risk === 'normal' || item.risk === 'high').toBe(true);

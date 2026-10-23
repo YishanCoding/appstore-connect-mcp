@@ -35,6 +35,7 @@ const VALUE_GLOBALS = new Set([
     'profile',
 ]);
 const BOOL_GLOBALS = new Set(['all', 'yes', 'verbose', 'help', 'json', 'legacy']);
+const OPTIONAL_BOOLEAN_FLAGS = new Set(['replace-existing', 'delete-old-image', 'delete-image']);
 
 export function kebabToCamel(value: string): string {
     return value.replace(/-([a-zA-Z0-9])/g, (_, char: string) => char.toUpperCase());
@@ -82,6 +83,12 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
             if (rawName === 'help') parsed.help = true;
             if (rawName === 'json') parsed.json = true;
             if (rawName === 'legacy') parsed.flags.legacy = true;
+            continue;
+        }
+
+        if (OPTIONAL_BOOLEAN_FLAGS.has(rawName) && inline === undefined &&
+            (argv[i + 1] === undefined || argv[i + 1]!.startsWith('--'))) {
+            parsed.flags[kebabToCamel(rawName)] = true;
             continue;
         }
 

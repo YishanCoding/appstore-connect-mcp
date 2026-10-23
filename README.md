@@ -36,6 +36,15 @@ A Model Context Protocol (MCP) server for interacting with Apple's App Store Con
 - List subscription groups for an app
 
 ### App Asset Library (ASC API 4.5.1)
+
+| Creative asset command | Action |
+| --- | --- |
+| `ascli creative-asset list` | List header, search, event card, and event details placements |
+| `ascli creative-asset set` | Upload and place one image; replacement needs `--yes --confirm <app-id>` |
+| `ascli creative-asset remove` | Delete a placement, optionally its image; needs `--yes --confirm <app-id>` |
+
+All three commands accept one of four localization targets: version, custom product page, event, or experiment treatment.
+
 - List per-app images, reference data, and version or custom product page placements
 - Upload images once, place them on localizations, and order screenshots by placement group
 - `ascli screenshot upload` uses App Asset Library by default; legacy screenshot sets require `--legacy`

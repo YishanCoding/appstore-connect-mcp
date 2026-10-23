@@ -249,6 +249,10 @@ async function dispatch(ctx: Ctx, name: string, args: Record<string, any>): Prom
             return { success: true, placementId: args.placementId };
         case 'appstore_delete_asset_library_image':
             return deleteLibraryImage(ctx, args.imageId);
+        case 'appstore_set_creative_asset':
+            return setCreativeAsset(ctx, args);
+        case 'appstore_remove_creative_asset':
+            return removeCreativeAsset(ctx, args);
         case 'appstore_delete_screenshot_set':
             return deleteScreenshotSet(ctx, args.screenshotSetId);
         case 'appstore_create_cpp':
@@ -426,6 +430,31 @@ async function appForTarget(client: AppStoreConnectClient, args: Record<string, 
         if (!appId) throw new CliUsage('版本没有 app 关系');
         return appId;
     }
+    if (t.key === 'appEventLocalization') {
+        const loc = await client.get<any>(`/appEventLocalizations/${enc(t.id)}`, { include: 'appEvent' });
+        const eventId = loc.data?.relationships?.appEvent?.data?.id;
+        if (!eventId) throw new CliUsage('活动本地化没有 appEvent 关系');
+        return findAppContaining(client, 'appEvents', eventId);
+    }
+    if (t.key === 'appStoreVersionExperimentTreatmentLocalization') {
+        const loc = await client.get<any>(`/appStoreVersionExperimentTreatmentLocalizations/${enc(t.id)}`, { include: 'appStoreVersionExperimentTreatment' });
+        const treatmentId = loc.data?.relationships?.appStoreVersionExperimentTreatment?.data?.id;
+        if (!treatmentId) throw new CliUsage('实验本地化没有 treatment 关系');
+        const treatment = await client.get<any>(`/appStoreVersionExperimentTreatments/${enc(treatmentId)}`, { include: 'appStoreVersionExperiment,appStoreVersionExperimentV2' });
+        const experimentId = treatment.data?.relationships?.appStoreVersionExperiment?.data?.id;
+        if (experimentId) {
+            const experiment = await client.get<any>(`/appStoreVersionExperiments/${enc(experimentId)}`, { include: 'appStoreVersion' });
+            const versionId = experiment.data?.relationships?.appStoreVersion?.data?.id;
+            if (!versionId) throw new CliUsage('实验没有 appStoreVersion 关系');
+            const version = await client.get<any>(`/appStoreVersions/${enc(versionId)}`, { include: 'app' });
+            const appId = version.data?.relationships?.app?.data?.id;
+            if (!appId) throw new CliUsage('实验版本没有 app 关系');
+            return appId;
+        }
+        const experimentV2Id = treatment.data?.relationships?.appStoreVersionExperimentV2?.data?.id;
+        if (!experimentV2Id) throw new CliUsage('treatment 没有实验关系');
+        return findAppContaining(client, 'appStoreVersionExperimentsV2', experimentV2Id);
+    }
     const loc = await client.get<any>(`/appCustomProductPageLocalizations/${enc(t.id)}`, { include: 'appCustomProductPageVersion' });
     const versionId = loc.data?.relationships?.appCustomProductPageVersion?.data?.id;
     if (!versionId) throw new CliUsage('CPP 本地化没有版本关系');
@@ -435,6 +464,17 @@ async function appForTarget(client: AppStoreConnectClient, args: Record<string, 
     const appId = cpp.data?.relationships?.app?.data?.id;
     if (!appId) throw new CliUsage('CPP 没有 app 关系');
     return appId;
+}
+
+async function findAppContaining(client: AppStoreConnectClient, collection: 'appEvents' | 'appStoreVersionExperimentsV2', resourceId: string): Promise<string> {
+    const apps = await client.getAllPages<any>('/apps');
+    const matches: string[] = [];
+    for (const app of apps) {
+        const items = await client.getAllPages<any>(`/apps/${enc(app.id)}/${collection}`);
+        if (items.some((item) => item.id === resourceId)) matches.push(app.id);
+    }
+    if (matches.length !== 1) throw new CliUsage(`无法唯一确认 ${resourceId} 所属 app`);
+    return matches[0]!;
 }
 
 async function createAssetPlacement(ctx: Ctx, args: Record<string, any>) {
@@ -495,6 +535,160 @@ async function deleteLibraryImage(ctx: Ctx, imageId: string) {
     if (placements.length) throw new CliUsage(`图片 ${imageId} 仍有 placement；先用 placement delete 删除，再删图片`);
     await write(ctx, 'DELETE', `/appAssetLibraryImages/${enc(imageId)}`, null);
     return { success: true, imageId };
+}
+
+const CREATIVE_TYPES: Record<string, string> = {
+    header: 'PRODUCT_PAGE_HEADER_ASSET', search: 'APP_STORE_SEARCH_RESULTS_ASSET',
+    'event-card': 'EVENT_CARD_ASSET', 'event-details': 'EVENT_DETAILS_PAGE_ASSET',
+};
+const CREATIVE_GROUP = 'DEFAULT_PROFILE';
+
+function creativeTarget(args: Record<string, any>) {
+    const target = targetOf(args);
+    const placementType = CREATIVE_TYPES[args.type];
+    if (!placementType) throw new CliUsage(`无效创意素材 type: ${args.type}`);
+    if ((args.type.startsWith('event-')) !== (target.key === 'appEventLocalization')) {
+        throw new CliUsage(`${args.type} 与目标本地化类型不匹配`);
+    }
+    return { target, placementType, path: `/${target.type}/${enc(target.id)}/placements` };
+}
+
+function creativeOwnershipSteps(ctx: Ctx, target: ReturnType<typeof targetOf>) {
+    const add = (path: string, include?: string, note?: string) =>
+        ctx.steps.push({ method: 'GET', path, body: null, ...(include ? { params: { include } } : {}), ...(note ? { note } : {}) });
+    add(`/${target.type}/${enc(target.id)}`,
+        target.key === 'appStoreVersionLocalization' ? 'appStoreVersion'
+            : target.key === 'appCustomProductPageLocalization' ? 'appCustomProductPageVersion'
+                : target.key === 'appEventLocalization' ? 'appEvent' : 'appStoreVersionExperimentTreatment');
+    if (target.key === 'appStoreVersionLocalization') add('/appStoreVersions/{appStoreVersionId}', 'app');
+    if (target.key === 'appCustomProductPageLocalization') {
+        add('/appCustomProductPageVersions/{cppVersionId}', 'appCustomProductPage');
+        add('/appCustomProductPages/{cppId}', 'app');
+    }
+    if (target.key === 'appEventLocalization') {
+        add('/apps', undefined, '分页列出 app，确认活动归属');
+        add('/apps/{appId}/appEvents', undefined, '对每个 app 分页查找目标 appEventId，必须唯一');
+    }
+    if (target.key === 'appStoreVersionExperimentTreatmentLocalization') {
+        add('/appStoreVersionExperimentTreatments/{treatmentId}', 'appStoreVersionExperiment,appStoreVersionExperimentV2');
+        add('/appStoreVersionExperiments/{experimentId}', 'appStoreVersion', '旧版实验关系');
+        add('/appStoreVersions/{appStoreVersionId}', 'app', '旧版实验关系');
+        add('/apps', undefined, 'V2 实验：分页列出 app');
+        add('/apps/{appId}/appStoreVersionExperimentsV2', undefined, 'V2 实验：逐 app 分页确认归属');
+    }
+}
+
+async function existingCreative(client: AppStoreConnectClient, path: string, placementType: string) {
+    const items = await client.getAllPages<any>(path, { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP, include: 'image' });
+    if (items.length > 1) throw new CliUsage(`${placementType} 返回多个 placement，拒绝自动修改`);
+    return items[0];
+}
+
+async function ensureImageOnlyOnPlacement(client: AppStoreConnectClient, imageId: string, placementId: string) {
+    const placements = await client.getAllPages<{ id: string }>(`/appAssetLibraryImages/${enc(imageId)}/placements`);
+    if (placements.some((item) => item.id !== placementId)) {
+        throw new CliUsage(`图片 ${imageId} 还用于其他 placement；不能删除图片`);
+    }
+}
+
+async function rollbackCreativeImage(client: AppStoreConnectClient, imageId: string, cause: unknown): Promise<never> {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    try {
+        await client.delete(`/appAssetLibraryImages/${enc(imageId)}`);
+        throw new CliUsage(`${message}；刚上传的图片 ${imageId} 已回滚`);
+    } catch (rollbackError) {
+        if (rollbackError instanceof CliUsage) throw rollbackError;
+        throw new Error(`${message}；回滚图片 ${imageId} 失败：${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+    }
+}
+
+async function setCreativeAsset(ctx: Ctx, args: Record<string, any>) {
+    const { target, placementType, path } = creativeTarget(args);
+    if (args.deleteOldImage && !args.replaceExisting) throw new CliUsage('--delete-old-image 需要同时指定 --replace-existing');
+    const body = placementBody('{reservedId}', args, placementType, CREATIVE_GROUP);
+    if (!ctx.execute) {
+        creativeOwnershipSteps(ctx, target);
+        ctx.steps.push({ method: 'GET', path: '/apps/{appId}/assetLibrary', body: null });
+        ctx.steps.push({ method: 'GET', path: '/appAssetLibraryRefData', body: null });
+        ctx.steps.push({ method: 'GET', path, params: { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP, include: 'image' }, body: null,
+            note: args.replaceExisting ? '确认旧 placement，准备替换' : '若已有 placement，立即报错且不上传' });
+        if (args.deleteOldImage) ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{oldImageId}/placements', body: null,
+            note: '预检旧图只用于当前 placement；有其他引用则在上传前拒绝' });
+        ctx.steps.push({ method: 'POST', path: '/appAssetLibraryImages', body: reserveImageBody('{assetLibraryId}', args.file, 'CREATIVE_ASSETS') });
+        ctx.steps.push(plannedUploadStep());
+        ctx.steps.push({ method: 'PATCH', path: '/appAssetLibraryImages/{reservedId}', body: commitImageBody('{reservedId}') });
+        ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{reservedId}', body: null, note: '轮询至得到 specId；用 reference 校验规格' });
+        ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryImages/{reservedId}', body: null, note: '仅规格不合格或新 placement 创建失败时回滚' });
+        if (args.replaceExisting) ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryPlacements/{existingId}', body: null, note: '有旧位置时先删旧 placement' });
+        ctx.steps.push({ method: 'POST', path: '/appAssetLibraryPlacements', body });
+        if (args.deleteOldImage) {
+            ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{oldImageId}/placements', body: null, note: '必须无其他 placement' });
+            ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryImages/{oldImageId}', body: null, note: '新 placement 建成后删除旧图' });
+        }
+        return;
+    }
+    const appId = await appForTarget(ctx.client!, args);
+    const libraryId = await libraryIdForApp(ctx.client!, appId);
+    const reference = await getReference(ctx.client!);
+    try { validateGroup(reference, placementType, CREATIVE_GROUP); }
+    catch (error) { throw new CliUsage(error instanceof Error ? error.message : String(error)); }
+    const accepted = (reference.placementTypes ?? []).find((item: any) => item.placementTypeId === placementType)?.acceptsAssetCategories;
+    if (!accepted?.includes('CREATIVE_ASSETS')) throw new CliUsage(`${placementType} 不接受 CREATIVE_ASSETS category`);
+    const previous = await existingCreative(ctx.client!, path, placementType);
+    if (previous && !args.replaceExisting) throw new CliUsage(`该位置已有 placement ${previous.id}；使用 --replace-existing true 替换`);
+    const oldImageId = previous?.relationships?.image?.data?.id;
+    if (args.deleteOldImage && previous && !oldImageId) throw new CliUsage(`placement ${previous.id} 没有 image 关系，不能删除旧图`);
+    if (args.deleteOldImage && oldImageId) await ensureImageOnlyOnPlacement(ctx.client!, oldImageId, previous.id);
+    const image = await uploadImage(ctx.client!, libraryId, args.file, 'CREATIVE_ASSETS');
+    try { validateGroup(reference, placementType, CREATIVE_GROUP, image.specId); }
+    catch (error) { return rollbackCreativeImage(ctx.client!, image.id, error); }
+    if (previous) await ctx.client!.delete(`/appAssetLibraryPlacements/${enc(previous.id)}`)
+        .catch((error) => rollbackCreativeImage(ctx.client!, image.id, error));
+    let placement: any;
+    try { placement = await ctx.client!.post<any>('/appAssetLibraryPlacements', placementBody(image.id, args, placementType, CREATIVE_GROUP)); }
+    catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return rollbackCreativeImage(ctx.client!, image.id,
+            previous ? new Error(`旧 placement ${previous.id} 已删除；新建失败：${detail}`) : error);
+    }
+    if (args.deleteOldImage && oldImageId && oldImageId !== image.id) {
+        try { await deleteLibraryImage(ctx, oldImageId); }
+        catch (error) {
+            throw new Error(`新 placement ${placement.data?.id} 已建成；旧图片 ${oldImageId} 删除失败：${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    return { imageId: image.id, placementId: placement.data?.id, ...(previous ? { replacedPlacementId: previous.id } : {}),
+        ...(args.deleteOldImage && oldImageId ? { deletedImageId: oldImageId } : {}) };
+}
+
+async function removeCreativeAsset(ctx: Ctx, args: Record<string, any>) {
+    const { target, placementType, path } = creativeTarget(args);
+    if (!ctx.execute) {
+        creativeOwnershipSteps(ctx, target);
+        ctx.steps.push({ method: 'GET', path, params: { 'filter[placementType]': placementType, 'filter[placementGroup]': CREATIVE_GROUP, include: 'image' }, body: null });
+        if (args.deleteImage) ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{imageId}/placements', body: null,
+            note: '预检图片只用于当前 placement；有其他引用则不删除 placement' });
+        ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryPlacements/{existingId}', body: null, note: '先删 placement，避免 CPP 删除后 INACTIVE 无法删除' });
+        if (args.deleteImage) {
+            ctx.steps.push({ method: 'GET', path: '/appAssetLibraryImages/{imageId}/placements', body: null, note: '必须无其他 placement' });
+            ctx.steps.push({ method: 'DELETE', path: '/appAssetLibraryImages/{imageId}', body: null });
+        }
+        return;
+    }
+    await appForTarget(ctx.client!, args);
+    const previous = await existingCreative(ctx.client!, path, placementType);
+    if (!previous) throw new CliUsage(`该位置没有 ${placementType} placement`);
+    const imageId = previous.relationships?.image?.data?.id;
+    if (args.deleteImage && !imageId) throw new CliUsage(`placement ${previous.id} 没有 image 关系，不能删除图片`);
+    if (args.deleteImage && imageId) await ensureImageOnlyOnPlacement(ctx.client!, imageId, previous.id);
+    await ctx.client!.delete(`/appAssetLibraryPlacements/${enc(previous.id)}`);
+    if (args.deleteImage && imageId) {
+        try { await deleteLibraryImage(ctx, imageId); }
+        catch (error) {
+            throw new Error(`placement ${previous.id} 已删除；图片 ${imageId} 删除失败：${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    return { placementId: previous.id, ...(args.deleteImage && imageId ? { deletedImageId: imageId } : {}) };
 }
 
 async function uploadLibraryScreenshots(ctx: Ctx, args: Record<string, any>) {
@@ -602,9 +796,10 @@ async function uploadScreenshots(ctx: Ctx, args: Record<string, any>) {
 }
 
 export function assertWriteInputs(name: string, args: Record<string, unknown>): void {
-    if (name === 'appstore_upload_screenshots' || name === 'appstore_upload_asset_library_image') {
+    if (name === 'appstore_upload_screenshots' || name === 'appstore_upload_asset_library_image' || name === 'appstore_set_creative_asset') {
         const paths = name === 'appstore_upload_asset_library_image'
             ? [args.file].filter((item): item is string => typeof item === 'string')
+            : name === 'appstore_set_creative_asset' ? [args.file].filter((item): item is string => typeof item === 'string')
             : Array.isArray(args.imagePaths) ? args.imagePaths.filter((item): item is string => typeof item === 'string') : [];
         try {
             assertReadableFiles(paths);

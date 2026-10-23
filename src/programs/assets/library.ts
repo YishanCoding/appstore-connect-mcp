@@ -3,15 +3,18 @@ import { readFileSync, statSync } from 'fs';
 import { basename } from 'path';
 import type { AppStoreConnectClient } from '../api-client/client.js';
 
-export type Target = { appStoreVersionLocalizationId?: string; appCustomProductPageLocalizationId?: string };
+export type Target = { appStoreVersionLocalizationId?: string; appCustomProductPageLocalizationId?: string;
+    appEventLocalizationId?: string; appStoreVersionExperimentTreatmentLocalizationId?: string };
 
 export function targetOf(target: Target) {
-    if (!!target.appStoreVersionLocalizationId === !!target.appCustomProductPageLocalizationId) {
-        throw new Error('必须且只能指定一个版本或 CPP 本地化 ID');
-    }
-    return target.appStoreVersionLocalizationId
-        ? { key: 'appStoreVersionLocalization', type: 'appStoreVersionLocalizations', id: target.appStoreVersionLocalizationId }
-        : { key: 'appCustomProductPageLocalization', type: 'appCustomProductPageLocalizations', id: target.appCustomProductPageLocalizationId! };
+    const selected = [
+        { key: 'appStoreVersionLocalization', type: 'appStoreVersionLocalizations', id: target.appStoreVersionLocalizationId },
+        { key: 'appCustomProductPageLocalization', type: 'appCustomProductPageLocalizations', id: target.appCustomProductPageLocalizationId },
+        { key: 'appEventLocalization', type: 'appEventLocalizations', id: target.appEventLocalizationId },
+        { key: 'appStoreVersionExperimentTreatmentLocalization', type: 'appStoreVersionExperimentTreatmentLocalizations', id: target.appStoreVersionExperimentTreatmentLocalizationId },
+    ].filter((item) => !!item.id);
+    if (selected.length !== 1) throw new Error('必须且只能指定一个本地化 ID');
+    return selected[0] as { key: string; type: string; id: string };
 }
 
 export const relationship = (type: string, id: string) => ({ data: { type, id } });
@@ -57,7 +60,11 @@ export function validateGroup(reference: any, placementType: string, placementGr
         throw new Error(`无效 placementGroup: ${placementGroup}；${placementType} 合法值: ${allowed.join(', ')}`);
     }
     if (specId && !mapping.specs?.includes(specId)) {
-        throw new Error(`图片 specId ${specId} 不适用于 ${placementType}/${placementGroup}；允许: ${(mapping.specs ?? []).join(', ')}`);
+        const allowed = (mapping.specs ?? []).map((id: string) => {
+            const spec = (reference.imageSpecs ?? []).find((item: any) => item.specId === id);
+            return spec ? `${id} ${JSON.stringify(spec.dimensions ?? spec)}` : id;
+        });
+        throw new Error(`图片 specId ${specId} 不适用于 ${placementType}/${placementGroup}；允许: ${allowed.join(', ')}`);
     }
 }
 

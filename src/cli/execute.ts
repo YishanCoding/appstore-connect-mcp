@@ -109,6 +109,24 @@ export async function executeTool(
             return placements.map((placement) => ({ id: placement.id, ...placement.attributes,
                 imageId: placement.relationships?.image?.data?.id, videoId: placement.relationships?.video?.data?.id }));
         }
+        case 'appstore_list_creative_assets': {
+            const target = targetOf(args);
+            const path = `/${target.type}/${encodeURIComponent(target.id)}/placements`;
+            const placements = await client.getAllPages<any>(path, { 'filter[placementGroup]': 'DEFAULT_PROFILE', include: 'image' });
+            const result = [];
+            for (const placement of placements) {
+                if (!['PRODUCT_PAGE_HEADER_ASSET', 'APP_STORE_SEARCH_RESULTS_ASSET', 'EVENT_CARD_ASSET', 'EVENT_DETAILS_PAGE_ASSET']
+                    .includes(placement.attributes?.placementType)) continue;
+                const imageId = placement.relationships?.image?.data?.id;
+                if (!imageId) continue;
+                const image = await client.get<any>(`/appAssetLibraryImages/${encodeURIComponent(imageId)}`);
+                if (image.data?.attributes?.category !== 'CREATIVE_ASSETS') continue;
+                result.push({ placementId: placement.id, type: placement.attributes?.placementType,
+                    state: placement.attributes?.state, imageId, specId: image.data.attributes?.specId,
+                    width: image.data.attributes?.imageAsset?.width, height: image.data.attributes?.imageAsset?.height });
+            }
+            return result;
+        }
         case 'appstore_list_cpps':
             return new CppManager(client, args.appId).listCpps(listOpts);
         case 'appstore_list_events':
