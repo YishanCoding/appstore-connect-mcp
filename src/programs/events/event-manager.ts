@@ -1,12 +1,11 @@
 import { AppStoreConnectClient } from '../api-client/index.js';
+import { ReviewSubmissionManager } from '../review-submissions/review-submission-manager.js';
 import {
     AppEventInfo,
     AppEventLocalizationInfo,
-    AppEventSubmissionInfo,
     AppEventResponse,
     AppEventLocalizationsResponse,
     AppEventLocalizationResponse,
-    AppEventSubmissionResponse,
     TerritorySchedule,
 } from './types.js';
 
@@ -170,21 +169,7 @@ export class EventManager {
         return this.mapLocalization(resp.data);
     }
 
-    public async submitEvent(eventId: string): Promise<AppEventSubmissionInfo> {
-        const resp = await this.client.post<AppEventSubmissionResponse>(
-            '/appEventSubmissions',
-            {
-                data: {
-                    type: 'appEventSubmissions',
-                    relationships: {
-                        appEvent: { data: { type: 'appEvents', id: eventId } },
-                    },
-                },
-            }
-        );
-        return {
-            id: resp.data.id,
-            eventId,
-        };
+    public async submitEvent(eventId: string, appId: string): Promise<any> {
+        return new ReviewSubmissionManager(this.client).submit('appEvent', eventId, appId);
     }
 }

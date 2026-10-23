@@ -4,6 +4,8 @@
 
 版本：v2 · 2026-09-23（v2：对齐三 CLI 统一约定） · 作者：Claude（规划/验收）· 实现：Grok
 
+> 2026-10-23 更新：本文 §3、§5 中关于 `version submit`、`version cancel`、`event submit` 使用旧端点及撤审一律拒绝的描述是当时实现记录，现已由 [CLI usage 的审核提交流程](cli-usage.md#审核提交与撤审asc-api-451) 取代。三条命令使用 `reviewSubmissions` 和 `reviewSubmissionItems`。
+
 ## 0. 先读统一约定
 
 `/Users/yishan/agent-skills/docs/cli-conventions.md` 是 ASA / ASC / GP 三个 CLI 的共同约定（命令形状、`--query/--body @file`、`--yes`、退出码、`tools --json`、`smoke`）。**本文与它冲突时以它为准。** 参考实现：已上线的 ASA CLI `/Users/yishan/projects/仓库-ASA-cli`（`aads-v1 --help`）。

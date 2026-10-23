@@ -1,9 +1,9 @@
 import { AppStoreConnectClient } from '../api-client/index.js';
+import { ReviewSubmissionManager } from '../review-submissions/review-submission-manager.js';
 import {
     AppStoreVersionsResponse,
     AppStoreVersionResponse,
     AppStoreReviewDetailResponse,
-    AppStoreReviewRequestResponse,
     AppStoreVersionPhasedReleaseResponse,
     AppStoreVersionReleaseRequestResponse,
     ReviewDetailAttributes,
@@ -62,22 +62,11 @@ export class VersionManager {
     }
 
     public async submitForReview(versionId: string): Promise<any> {
-        const response = await this.client.post<AppStoreReviewRequestResponse>(
-            '/appStoreReviewRequests',
-            {
-                data: {
-                    type: 'appStoreReviewRequests',
-                    relationships: {
-                        appStoreVersion: { data: { type: 'appStoreVersions', id: versionId } },
-                    },
-                },
-            }
-        );
-        return response.data;
+        return new ReviewSubmissionManager(this.client).submit('appStoreVersion', versionId);
     }
 
-    public async cancelReview(reviewRequestId: string): Promise<void> {
-        await this.client.delete(`/appStoreReviewRequests/${reviewRequestId}`);
+    public async cancelReview(options: { reviewSubmissionId?: string; versionId?: string; appId?: string }): Promise<any> {
+        return new ReviewSubmissionManager(this.client).cancel(options);
     }
 
     public async createPhasedRelease(versionId: string): Promise<any> {

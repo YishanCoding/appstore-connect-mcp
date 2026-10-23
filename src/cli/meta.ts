@@ -67,10 +67,11 @@ export const TOOL_META: Record<string, ToolMeta> = {
     appstore_delete_review_response: high('review delete-response', {
         idParam: 'reviewId',
         method: 'DELETE',
-        path: '/customerReviews/{reviewId}/response',
+        path: '/customerReviewResponses/{responseId}',
         body: 'none',
     }),
     appstore_list_versions: read('version list'),
+    appstore_list_review_submissions: read('review-submission list'),
     appstore_get_version: read('version get', { idParam: 'versionId' }),
     appstore_create_version: write('version create', {
         method: 'POST',
@@ -81,17 +82,15 @@ export const TOOL_META: Record<string, ToolMeta> = {
     }),
     appstore_submit_for_review: high('version submit', {
         idParam: 'versionId',
-        method: 'POST',
-        path: '/appStoreReviewRequests',
-        resourceType: 'appStoreReviewRequests',
-        attrKeys: [],
-        relationship: { key: 'appStoreVersion', type: 'appStoreVersions', idParam: 'versionId' },
+        method: 'PATCH',
+        path: '/reviewSubmissions/{reviewSubmissionId}',
+        resourceType: 'reviewSubmissions',
     }),
     appstore_cancel_review: high('version cancel', {
-        idParam: 'reviewRequestId',
-        method: 'DELETE',
-        path: '/appStoreReviewRequests/{reviewRequestId}',
-        body: 'none',
+        idParam: 'reviewSubmissionId',
+        method: 'PATCH',
+        path: '/reviewSubmissions/{reviewSubmissionId}',
+        resourceType: 'reviewSubmissions',
     }),
     appstore_release_version: high('version release', {
         idParam: 'versionId',
@@ -147,7 +146,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
     }),
     appstore_batch_update_version_localizations: write('version-localization batch-update', {
         method: 'PATCH',
-        path: '/appStoreVersionLocalizations',
+        path: '/appStoreVersionLocalizations/{localizationId}',
         body: 'raw',
     }),
     appstore_list_app_info_localizations: read('app-info-localization list'),
@@ -159,7 +158,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
     }),
     appstore_batch_update_app_info_localizations: write('app-info-localization batch-update', {
         method: 'PATCH',
-        path: '/appInfoLocalizations',
+        path: '/appInfoLocalizations/{appInfoLocalizationId}',
         body: 'raw',
     }),
     appstore_list_screenshot_sets: read('screenshot-set list'),
@@ -239,11 +238,9 @@ export const TOOL_META: Record<string, ToolMeta> = {
     }),
     appstore_submit_event: high('event submit', {
         idParam: 'eventId',
-        method: 'POST',
-        path: '/appEventSubmissions',
-        resourceType: 'appEventSubmissions',
-        attrKeys: [],
-        relationship: { key: 'appEvent', type: 'appEvents', idParam: 'eventId' },
+        method: 'PATCH',
+        path: '/reviewSubmissions/{reviewSubmissionId}',
+        resourceType: 'reviewSubmissions',
     }),
     appstore_list_users: read('user list'),
     appstore_invite_user: high('user invite', {

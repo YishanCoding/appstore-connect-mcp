@@ -140,7 +140,7 @@ export function helpText(resource?: string, verb?: string): string {
             ? '归属校验：--yes 时还要 --version-id <appStoreVersionId>（Apple 没有 GET phased release，只能从版本反查）。'
             : '',
         entry.tool.name === 'appstore_cancel_review'
-            ? '注意：DELETE /appStoreReviewRequests/{id} 不在 Apple OpenAPI 规范里，--yes 会被拒绝。'
+            ? '可用 reviewSubmissionId、--version-id 或 --app-id 定位；无法唯一定位时拒绝撤审。'
             : '',
         entry.tool.name === 'appstore_upload_screenshots'
             ? '默认走 App Asset Library，指定 --placement-group；--replace-existing true 会删除旧 placement，属高风险。--legacy 使用已弃用的截图集 API。'

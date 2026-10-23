@@ -1,5 +1,6 @@
 import { AppStoreConnectClient } from '../programs/api-client/client.js';
 import { AscHttpError } from '../programs/api-client/policy.js';
+import { ReviewSubmissionManager } from '../programs/review-submissions/review-submission-manager.js';
 import { buildCppCreateBody, CppManager, detachCppPlacements } from '../programs/cpp/index.js';
 import { CppPreflightError } from '../programs/cpp/cpp-manager.js';
 import {
@@ -89,6 +90,20 @@ async function read(ctx: Ctx, path: string, params?: Record<string, unknown>): P
     return ctx.client.get(path, params);
 }
 
+function submissionManager(ctx: Ctx): ReviewSubmissionManager {
+    return new ReviewSubmissionManager({
+        preview: !ctx.execute,
+        get: (path, params) => read(ctx, path, params),
+        getAllPages: async (path, params) => {
+            ctx.steps.push({ method: 'GET', path, body: null, params });
+            if (!ctx.client) throw new CliUsage('这条命令要先读取资源才能确定请求');
+            return ctx.client.getAllPages(path, params);
+        },
+        post: (path, body) => write(ctx, 'POST', path, body),
+        patch: (path, body) => write(ctx, 'PATCH', path, body),
+    });
+}
+
 async function write(ctx: Ctx, method: Exclude<HttpMethod, 'GET'>, path: string, body: unknown): Promise<any> {
     ctx.steps.push({ method, path, body: body ?? null });
     if (!ctx.execute) return undefined;
@@ -164,14 +179,10 @@ async function dispatch(ctx: Ctx, name: string, args: Record<string, any>): Prom
             const response = await write(ctx, 'POST', '/appStoreVersions', body);
             return response?.data ?? response;
         }
-        case 'appstore_submit_for_review': {
-            const body = createBody('appStoreReviewRequests', undefined, { key: 'appStoreVersion', type: 'appStoreVersions', id: args.versionId });
-            const response = await write(ctx, 'POST', '/appStoreReviewRequests', body);
-            return response?.data ?? response;
-        }
+        case 'appstore_submit_for_review':
+            return submissionManager(ctx).submit('appStoreVersion', args.versionId, args.appId);
         case 'appstore_cancel_review':
-            await write(ctx, 'DELETE', `/appStoreReviewRequests/${enc(args.reviewRequestId)}`, null);
-            return { success: true, deleted: args.reviewRequestId };
+            return submissionManager(ctx).cancel(args);
         case 'appstore_create_phased_release': {
             const body = createBody(
                 'appStoreVersionPhasedReleases',
@@ -287,11 +298,8 @@ async function dispatch(ctx: Ctx, name: string, args: Record<string, any>): Prom
             const response = await write(ctx, 'PATCH', `/appEventLocalizations/${enc(args.localizationId)}`, body);
             return response?.data ?? response;
         }
-        case 'appstore_submit_event': {
-            const body = createBody('appEventSubmissions', undefined, { key: 'appEvent', type: 'appEvents', id: args.eventId });
-            const response = await write(ctx, 'POST', '/appEventSubmissions', body);
-            return response?.data ?? { id: response?.data?.id, eventId: args.eventId };
-        }
+        case 'appstore_submit_event':
+            return submissionManager(ctx).submit('appEvent', args.eventId, args.appId);
         case 'appstore_invite_user': {
             const body = createBody('userInvitations', {
                 email: args.email,
@@ -713,6 +721,7 @@ async function runBatch(
 }
 
 export function writeNeedsRead(name: string, args: Record<string, unknown>): boolean {
+    if (['appstore_submit_for_review', 'appstore_cancel_review', 'appstore_submit_event'].includes(name)) return true;
     if (name === 'appstore_upload_screenshots') return args.legacy === true && args.replaceExisting !== false;
     return new Set([
         'appstore_respond_to_review',
