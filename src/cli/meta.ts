@@ -171,6 +171,9 @@ export const TOOL_META: Record<string, ToolMeta> = {
     appstore_order_asset_placements: high('placement order', { method: 'POST', path: '/appAssetLibraryPlacementOrderingRequests', resourceType: 'appAssetLibraryPlacementOrderingRequests' }),
     appstore_delete_asset_placement: high('placement delete', { idParam: 'placementId', method: 'DELETE', path: '/appAssetLibraryPlacements/{placementId}', body: 'none' }),
     appstore_delete_asset_library_image: high('asset-library delete-image', { idParam: 'imageId', method: 'DELETE', path: '/appAssetLibraryImages/{imageId}', body: 'none' }),
+    appstore_list_creative_assets: read('creative-asset list'),
+    appstore_set_creative_asset: write('creative-asset set', { method: 'POST', path: '/appAssetLibraryImages', resourceType: 'appAssetLibraryImages' }),
+    appstore_remove_creative_asset: high('creative-asset remove', { method: 'DELETE', path: '/appAssetLibraryPlacements/{existingId}', body: 'none' }),
     appstore_upload_screenshots: write('screenshot upload', {
         method: 'POST',
         path: '/appAssetLibraryImages',

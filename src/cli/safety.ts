@@ -29,6 +29,7 @@ export function decideSafety(input: SafetyInput): SafetyDecision {
 
 export function effectiveRisk(toolName: string, risk: 'normal' | 'high', args: Record<string, unknown>): 'normal' | 'high' {
     if (toolName === 'appstore_upload_screenshots' && (args.legacy ? args.replaceExisting !== false : args.replaceExisting === true)) return 'high';
+    if (toolName === 'appstore_set_creative_asset' && (args.replaceExisting === true || args.deleteOldImage === true)) return 'high';
     return risk;
 }
 
@@ -122,6 +123,28 @@ export function bindingReads(toolName: string, args: Record<string, unknown>, ct
         return [
             { method: 'GET', path: `/appStoreVersionLocalizations/${id(args.appStoreVersionLocalizationId)}`, params: { include: 'appStoreVersion' } },
             { method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', params: { include: 'app' } },
+        ];
+    }
+    if (toolName === 'appstore_set_creative_asset' || toolName === 'appstore_remove_creative_asset') {
+        if (args.appStoreVersionLocalizationId) return [
+            { method: 'GET', path: `/appStoreVersionLocalizations/${id(args.appStoreVersionLocalizationId)}`, params: { include: 'appStoreVersion' } },
+            { method: 'GET', path: '/appStoreVersions/{appStoreVersionId}', params: { include: 'app' } },
+        ];
+        if (args.appCustomProductPageLocalizationId) return [
+            { method: 'GET', path: `/appCustomProductPageLocalizations/${id(args.appCustomProductPageLocalizationId)}`, params: { include: 'appCustomProductPageVersion' } },
+            { method: 'GET', path: '/appCustomProductPageVersions/{cppVersionId}', params: { include: 'appCustomProductPage' } },
+            { method: 'GET', path: '/appCustomProductPages/{cppId}', params: { include: 'app' } },
+        ];
+        if (args.appEventLocalizationId) return [
+            { method: 'GET', path: `/appEventLocalizations/${id(args.appEventLocalizationId)}`, params: { include: 'appEvent' } },
+            { method: 'GET', path: `/apps/${ctx.confirm ? id(ctx.confirm) : '{--confirm}'}/appEvents`, note: '分页读完；列表必须包含目标 appEventId' },
+        ];
+        return [
+            { method: 'GET', path: `/appStoreVersionExperimentTreatmentLocalizations/${id(args.appStoreVersionExperimentTreatmentLocalizationId)}`, params: { include: 'appStoreVersionExperimentTreatment' } },
+            { method: 'GET', path: '/appStoreVersionExperimentTreatments/{treatmentId}', params: { include: 'appStoreVersionExperiment,appStoreVersionExperimentV2' } },
+            { method: 'GET', path: '/appStoreVersionExperiments/{experimentId}', params: { include: 'appStoreVersion' }, note: '旧版实验' },
+            { method: 'GET', path: '/appStoreVersions/{versionId}', params: { include: 'app' }, note: '旧版实验' },
+            { method: 'GET', path: `/apps/${ctx.confirm ? id(ctx.confirm) : '{--confirm}'}/appStoreVersionExperimentsV2`, note: 'V2 实验；分页读完，必须包含 experimentId' },
         ];
     }
     if (toolName === 'appstore_order_asset_placements') {
@@ -272,6 +295,38 @@ export async function bindConfirm(
         if (!cppId) return undefined;
         return relId(await reader.get(`/appCustomProductPages/${id(cppId)}`, { include: 'app' }), 'app');
     };
+
+    if (toolName === 'appstore_set_creative_asset' || toolName === 'appstore_remove_creative_asset') {
+        if (args.appStoreVersionLocalizationId) return matchApp(
+            await versionLocalizationApp(String(args.appStoreVersionLocalizationId)), '创意素材版本本地化关系链');
+        if (args.appCustomProductPageLocalizationId) return matchApp(
+            await cppLocalizationApp(String(args.appCustomProductPageLocalizationId)), '创意素材 CPP 本地化关系链');
+        if (args.appEventLocalizationId) {
+            const loc = await reader.get(`/appEventLocalizations/${id(args.appEventLocalizationId)}`, { include: 'appEvent' });
+            const eventId = relId(loc, 'appEvent');
+            if (!eventId) return deny('活动本地化缺少 appEvent 关系');
+            const events = await reader.getAll(`/apps/${id(confirm)}/appEvents`);
+            return events.some((event) => (event as { id?: string }).id === eventId)
+                ? { ok: true } : deny(`活动 ${eventId} 不属于 app ${confirm}`);
+        }
+        const loc = await reader.get(`/appStoreVersionExperimentTreatmentLocalizations/${id(args.appStoreVersionExperimentTreatmentLocalizationId)}`,
+            { include: 'appStoreVersionExperimentTreatment' });
+        const treatmentId = relId(loc, 'appStoreVersionExperimentTreatment');
+        if (!treatmentId) return deny('实验本地化缺少 treatment 关系');
+        const treatment = await reader.get(`/appStoreVersionExperimentTreatments/${id(treatmentId)}`,
+            { include: 'appStoreVersionExperiment,appStoreVersionExperimentV2' });
+        const experimentId = relId(treatment, 'appStoreVersionExperiment');
+        if (experimentId) {
+            const experiment = await reader.get(`/appStoreVersionExperiments/${id(experimentId)}`, { include: 'appStoreVersion' });
+            const versionId = relId(experiment, 'appStoreVersion');
+            return matchApp(versionId ? await versionApp(versionId) : undefined, 'treatment → experiment → version → app');
+        }
+        const experimentV2Id = relId(treatment, 'appStoreVersionExperimentV2');
+        if (!experimentV2Id) return deny('treatment 缺少实验关系');
+        const experiments = await reader.getAll(`/apps/${id(confirm)}/appStoreVersionExperimentsV2`);
+        return experiments.some((experiment) => (experiment as { id?: string }).id === experimentV2Id)
+            ? { ok: true } : deny(`实验 ${experimentV2Id} 不属于 app ${confirm}`);
+    }
 
     const versionKey = VERSION_TOOLS[toolName];
     if (versionKey) {
