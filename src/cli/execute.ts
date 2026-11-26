@@ -15,6 +15,7 @@ import { ReviewSubmissionManager } from '../programs/review-submissions/review-s
 import { ExportFailed, runWrite } from './write-call.js';
 import { TOOL_META } from './meta.js';
 import { getReference, libraryIdForApp, targetOf } from '../programs/assets/library.js';
+import { mapScreenshotSets } from '../programs/assets/screenshot-sets.js';
 
 export interface PageOpts {
     all: boolean;
@@ -185,23 +186,14 @@ function capFor(page: PageOpts, schemaLimit: number | undefined): number | undef
     return page.limit ?? schemaLimit;
 }
 
-function mapScreenshotSets(sets: any[]) {
-    return sets.map((set) => ({
-        id: set.id,
-        screenshotDisplayType: set.attributes?.screenshotDisplayType,
-        screenshotCount: set.relationships?.appScreenshots?.data?.length ?? 0,
-        screenshots: (set.relationships?.appScreenshots?.data || []).map((shot: any) => shot.id),
-    }));
-}
-
 async function listScreenshotSets(client: AppStoreConnectClient, localizationId: string, page: PageOpts) {
     const path = `/appStoreVersionLocalizations/${localizationId}/appScreenshotSets`;
     const params = { include: 'appScreenshots' };
     if (page.all) {
         const items = await client.getAllPages<any>(path, params, { limit: page.limit });
-        return mapScreenshotSets(items);
+        return mapScreenshotSets(client, items);
     }
     const resp = await client.get<any>(path, params);
     const data = page.limit ? (resp.data || []).slice(0, page.limit) : (resp.data || []);
-    return mapScreenshotSets(data);
+    return mapScreenshotSets(client, data);
 }
