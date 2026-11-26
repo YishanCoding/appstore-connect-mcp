@@ -1475,3 +1475,13 @@ describe('keywords guard on version-localization updates', () => {
         expect(result.code).toBe(2);
     });
 });
+
+describe('two-word alias with a positional id', () => {
+    test('version-localization update <id> resolves like version update-localization <id>', async () => {
+        const viaAlias = await runCli(['version-localization', 'update', 'LOC1', '--whats-new', 'x']);
+        const viaCommand = await runCli(['version', 'update-localization', 'LOC1', '--whats-new', 'x']);
+        expect(viaAlias.code).toBe(0);
+        expect(viaAlias.stdout).toBe(viaCommand.stdout);
+        expect(JSON.parse(viaAlias.stdout).body.data.attributes).toEqual({ whatsNew: 'x' });
+    });
+});

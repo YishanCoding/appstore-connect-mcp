@@ -68,7 +68,8 @@ export function resolveCommand(positionals: string[]): CatalogEntry | undefined 
     const byCommand = entries.find((entry) => entry.command === two);
     if (byCommand) return byCommand;
     const joined = positionals.join(' ');
-    const byAlias = entries.find((entry) => entry.aliases.some((alias) => alias === joined || alias === positionals[0]));
+    // A two-word alias may be followed by a positional id: `version-localization update <id>`.
+    const byAlias = entries.find((entry) => entry.aliases.some((alias) => alias === joined || joined.startsWith(alias + ' ') && alias.includes(' ') || alias === positionals[0]));
     if (byAlias) return byAlias;
     return entries.find((entry) => entry.command === positionals[0]);
 }
