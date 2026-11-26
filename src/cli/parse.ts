@@ -35,7 +35,7 @@ const VALUE_GLOBALS = new Set([
     'profile',
 ]);
 const BOOL_GLOBALS = new Set(['all', 'yes', 'verbose', 'help', 'json', 'legacy']);
-const OPTIONAL_BOOLEAN_FLAGS = new Set(['replace-existing', 'delete-old-image', 'delete-image']);
+const OPTIONAL_BOOLEAN_FLAGS = new Set(['replace-existing', 'delete-old-image', 'delete-image', 'allow-keywords']);
 
 export function kebabToCamel(value: string): string {
     return value.replace(/-([a-zA-Z0-9])/g, (_, char: string) => char.toUpperCase());

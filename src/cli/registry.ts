@@ -1,6 +1,7 @@
 import { toJSONSchema, z } from 'zod';
 import { loadToolCatalog, type CollectedTool } from '../mcp/tools/index.js';
 import { TOOL_META, mechanicalAlias, type ToolMeta } from './meta.js';
+import { KEYWORD_GUARD_TOOLS } from './keyword-guard.js';
 
 export interface CatalogEntry {
     tool: CollectedTool;
@@ -127,6 +128,9 @@ export function helpText(resource?: string, verb?: string): string {
         '',
         `kind: ${entry.meta.kind}  risk: ${entry.meta.risk}`,
         entry.meta.kind === 'write' ? '默认 dry-run；真正执行加 --yes。' : '',
+        KEYWORD_GUARD_TOOLS.has(entry.tool.name)
+            ? 'keywords 保护：请求里带 keywords 字段时必须加 --allow-keywords，否则拒绝（exit 2）。只改 whatsNew/description/promotionalText 时不要把 list 出来的整条记录原样回传。'
+            : '',
         entry.meta.risk === 'high' && entry.meta.confirm === 'user'
             ? '高风险：--yes 之外还要 --confirm <userId 或 email>，必须等于目标。'
             : '',

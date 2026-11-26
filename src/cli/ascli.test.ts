@@ -64,8 +64,8 @@ describe('ascli', () => {
         const file = join(dir, 'body.json');
         const payload = { whatsNew: 'from-file', keywords: 'a,b' };
         writeFileSync(file, JSON.stringify(payload));
-        const inline = await runCli(['version', 'update-localization', 'loc-1', '--body', JSON.stringify(payload)]);
-        const fromFile = await runCli(['version', 'update-localization', 'loc-1', '--body', `@${file}`]);
+        const inline = await runCli(['version', 'update-localization', 'loc-1', '--body', JSON.stringify(payload), '--allow-keywords']);
+        const fromFile = await runCli(['version', 'update-localization', 'loc-1', '--body', `@${file}`, '--allow-keywords']);
         expect(inline.code).toBe(0);
         expect(fromFile.code).toBe(0);
         const inlineBody = json(inline.stdout);
@@ -1409,5 +1409,69 @@ describe('individual API key', () => {
         const { readCredentials } = await import('./run.js');
         const creds = readCredentials({ APP_STORE_CONNECT_KEY_ID: 'K', APP_STORE_CONNECT_PRIVATE_KEY: 'p' });
         expect(creds.issuerId).toBeUndefined();
+    });
+});
+
+describe('keywords guard on version-localization updates', () => {
+    const okTransport = (calls: any[]) => ({
+        async send(call: any) {
+            calls.push(call);
+            return { status: 200, headers: {}, data: { data: { id: 'L1', attributes: { locale: 'en-US' } } } };
+        },
+    });
+
+    test('batch-update carrying keywords is rejected without --allow-keywords, even in dry-run', async () => {
+        for (const extra of [[], ['--yes']]) {
+            const calls: any[] = [];
+            const result = await runCli([
+                'version-localization', 'batch-update',
+                '--updates', JSON.stringify([
+                    { localizationId: 'L1', whatsNew: 'new', keywords: 'stale,old' },
+                    { localizationId: 'L2', whatsNew: 'b' },
+                ]),
+                ...extra,
+            ], { env, transport: okTransport(calls) });
+            expect(result.code).toBe(2);
+            expect(result.stderr).toContain('--allow-keywords');
+            expect(result.stderr).toContain('L1');
+            expect(calls).toHaveLength(0);
+        }
+    });
+
+    test('single update with --keywords is rejected without --allow-keywords', async () => {
+        const calls: any[] = [];
+        const result = await runCli(['version-localization', 'update', 'L1', '--whats-new', 'x', '--keywords', 'a,b', '--yes'], { env, transport: okTransport(calls) });
+        expect(result.code).toBe(2);
+        expect(calls).toHaveLength(0);
+    });
+
+    test('whatsNew-only batch goes through and the PATCH body has no keywords', async () => {
+        const calls: any[] = [];
+        const result = await runCli([
+            'version-localization', 'batch-update',
+            '--updates', JSON.stringify([{ localizationId: 'L1', whatsNew: 'new' }]),
+            '--yes',
+        ], { env, transport: okTransport(calls) });
+        expect(result.code).toBe(0);
+        const patch = calls.find((call) => call.method === 'PATCH');
+        expect(patch).toBeTruthy();
+        const body = typeof patch.body === 'string' ? JSON.parse(patch.body) : (patch.body ?? patch.data);
+        expect(JSON.stringify(body)).not.toContain('keywords');
+    });
+
+    test('--allow-keywords lets keywords through', async () => {
+        const calls: any[] = [];
+        const result = await runCli([
+            'version-localization', 'batch-update',
+            '--updates', JSON.stringify([{ localizationId: 'L1', keywords: 'a,b' }]),
+            '--allow-keywords', '--yes',
+        ], { env, transport: okTransport(calls) });
+        expect(result.code).toBe(0);
+        expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(1);
+    });
+
+    test('--allow-keywords is unknown on other commands', async () => {
+        const result = await runCli(['version', 'list', '--app', '1', '--allow-keywords'], { env });
+        expect(result.code).toBe(2);
     });
 });
