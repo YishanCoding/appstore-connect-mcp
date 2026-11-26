@@ -24,7 +24,7 @@ export function registerAssetTools(server: McpServer) {
         ['appstore_get_asset_library', 'Read an app asset library.', z.object({ appId: z.string() })],
         ['appstore_list_asset_library_images', 'List image assets with state, specId and dimensions.', z.object({ appId: z.string() })],
         ['appstore_get_asset_library_reference', 'Read runtime placement groups, types and specifications.', z.object({ appId: z.string() })],
-        ['appstore_list_asset_placements', 'List version or CPP localization placements.', z.object(target).refine(exactlyOneTarget, '指定一个版本或 CPP 本地化 ID')],
+        ['appstore_list_asset_placements', 'List version or CPP localization placements. Version screenshots carried over from the previous version may exist only as legacy screenshot-set entries and are not listed here; use screenshot-set list to see the true per-set count before submitting.', z.object(target).refine(exactlyOneTarget, '指定一个版本或 CPP 本地化 ID')],
         ['appstore_upload_asset_library_image', 'Reserve, upload, commit and poll an image asset.', z.object({ appId: z.string(), file: z.string(), category: z.enum(['APP_SCREENSHOTS_AND_PREVIEWS', 'CREATIVE_ASSETS']).optional() })],
         ['appstore_create_asset_placement', 'Place an image in a version or CPP localization.', z.object({ imageId: z.string(), placementType: z.string(), placementGroup: z.string(), ...target }).refine(exactlyOneTarget, '指定一个版本或 CPP 本地化 ID')],
         ['appstore_order_asset_placements', 'Order placements within a localization and group.', z.object({ placementIds: z.array(z.string()).min(1), placementGroup: z.string(), ...target }).refine(exactlyOneTarget, '指定一个版本或 CPP 本地化 ID')],

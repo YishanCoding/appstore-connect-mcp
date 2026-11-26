@@ -1485,3 +1485,37 @@ describe('two-word alias with a positional id', () => {
         expect(JSON.parse(viaAlias.stdout).body.data.attributes).toEqual({ whatsNew: 'x' });
     });
 });
+
+describe('screenshot-set list reports the true count past the include cap', () => {
+    test('a set with 14 screenshots is not reported as 10 and carries a warning', async () => {
+        const ids = Array.from({ length: 14 }, (_, i) => 'S' + i);
+        const names = ['01.png', '02.png', '03.png', '04.png', '05.png', '06.png', '07.png', '02.png', '01.png', '03.png', '04.png', '05.png', '06.png', '07.png'];
+        const result = await runCli(['screenshot-set', 'list', '--app-store-version-localization-id', 'LOC'], {
+            env,
+            transport: {
+                async send(call: any) {
+                    if (String(call.url).includes('/appStoreVersionLocalizations/LOC/appScreenshotSets')) {
+                        return { status: 200, headers: {}, data: { data: [
+                            { id: 'SET65', attributes: { screenshotDisplayType: 'APP_IPHONE_65' },
+                              relationships: { appScreenshots: { data: ids.slice(0, 10).map((id) => ({ id })), meta: { paging: { total: 14, limit: 10 } } } } },
+                            { id: 'SETPAD', attributes: { screenshotDisplayType: 'APP_IPAD_PRO_3GEN_129' },
+                              relationships: { appScreenshots: { data: ids.slice(0, 7).map((id) => ({ id })), meta: { paging: { total: 7, limit: 10 } } } } },
+                        ] } };
+                    }
+                    if (String(call.url).includes('/appScreenshotSets/SET65/appScreenshots')) {
+                        return { status: 200, headers: {}, data: { data: ids.map((id, i) => ({ id, attributes: { fileName: names[i] } })) } };
+                    }
+                    return { status: 404, headers: {}, data: { errors: [{ status: '404', code: 'NOT_FOUND', title: 'nf', detail: String(call.url) }] } };
+                },
+            },
+        });
+        expect(result.code).toBe(0);
+        const sets = JSON.parse(result.stdout);
+        expect(sets[0].screenshotCount).toBe(14);
+        expect(sets[0].screenshots).toHaveLength(14);
+        expect(sets[0].warning).toContain('SCREENSHOT_TOO_MANY');
+        expect(sets[0].warning).toContain('01.png');
+        expect(sets[1].screenshotCount).toBe(7);
+        expect(sets[1].warning).toBeUndefined();
+    });
+});

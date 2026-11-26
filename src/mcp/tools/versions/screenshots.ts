@@ -6,6 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { AppStoreConnectClient } from '../../../programs/api-client/index.js';
 import { getStoredCredentials } from '../auth/store-credentials.js';
+import { mapScreenshotSets } from '../../../programs/assets/screenshot-sets.js';
 import { ScreenshotReserveResponse, UploadOperation } from '../../../programs/cpp/types.js';
 
 // Bypass system proxy for S3 and CDN calls
@@ -117,7 +118,7 @@ export function registerScreenshotTools(server: McpServer) {
     server.registerTool(
         'appstore_list_screenshot_sets',
         {
-            description: 'Deprecated: list legacy screenshot sets for an App Store version localization.',
+            description: 'List legacy screenshot sets for an App Store version localization with the true per-set count (Apple caps include at 10). Screenshots carried over from the previous version can live only here and do not show in placement list; check this before submitting, since more than 10 per set blocks review with SCREENSHOT_TOO_MANY.',
             inputSchema: z.object({
                 appStoreVersionLocalizationId: z.string().describe('Version localization ID (from appstore_list_version_localizations)'),
             }),
@@ -130,12 +131,7 @@ export function registerScreenshotTools(server: McpServer) {
                     `/appStoreVersionLocalizations/${appStoreVersionLocalizationId}/appScreenshotSets`,
                     { include: 'appScreenshots' }
                 );
-                const sets = (resp.data || []).map((set: any) => ({
-                    id: set.id,
-                    screenshotDisplayType: set.attributes?.screenshotDisplayType,
-                    screenshotCount: set.relationships?.appScreenshots?.data?.length ?? 0,
-                    screenshots: (set.relationships?.appScreenshots?.data || []).map((s: any) => s.id),
-                }));
+                const sets = await mapScreenshotSets(client, resp.data || []);
                 return {
                     content: [{
                         type: 'text' as const,

@@ -78,7 +78,7 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
         }
 
         toolName = entry.tool.name;
-        if (toolName === 'appstore_list_screenshot_sets' || toolName === 'appstore_delete_screenshot_set'
+        if (toolName === 'appstore_delete_screenshot_set'
             || ((toolName === 'appstore_upload_screenshots' || toolName === 'appstore_create_cpp') && parsed.flags.legacy)) {
             verbose.push('deprecated: screenshot-set API 已弃用；请改用 asset-library 和 placement 命令。\n');
         }
