@@ -54,6 +54,10 @@ All three commands accept one of four localization targets: version, custom prod
 
 See [CLI usage](docs/cli-usage.md#app-asset-library-截图流程asc-api-451) for commands and dry-run examples.
 
+### Keywords guard
+
+`version-localization update` and `batch-update` refuse any request that carries a `keywords` field unless you pass `--allow-keywords` (exit 2, nothing sent, dry-run included). To change only What's New / description / promotional text, send just those fields — don't send back whole records from `version-localization list`, or a stale snapshot will overwrite live keywords.
+
 ### Review submissions (ASC API 4.5.1)
 
 `ascli review-submission list --app-id <app-id>` shows active and past submissions with item summaries. `version submit`, `version cancel`, and `event submit` use Apple's `reviewSubmissions` and `reviewSubmissionItems` resources. They default to dry-run; execution requires `--yes --confirm <app-id>`. See [CLI usage](docs/cli-usage.md#审核提交与撤审asc-api-451).

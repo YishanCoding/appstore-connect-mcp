@@ -7,6 +7,7 @@ import { parseArgs } from './parse.js';
 import { applyLimit, apiError, authError, CliUsage, formatData, projectFields, redact, usageError } from './output.js';
 import { asParser, commandPositionals, helpText, objectShape, resolveCommand, toolsJson } from './registry.js';
 import { BIND_VERSION_ID_TOOLS, bindConfirm, bindingReads, decideSafety, effectiveRisk, extractAppId, type BindContext } from './safety.js';
+import { KEYWORD_GUARD_TOOLS, keywordTargets } from './keyword-guard.js';
 import { describeFiles } from './write-plan.js';
 import { assertWriteInputs, ExportFailed, PartialBatch, runWrite, writeNeedsRead, type WritePreview } from './write-call.js';
 import { AppManager } from '../programs/apps/index.js';
@@ -90,6 +91,12 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
             bindVersionId = String(parsed.flags.versionId);
             delete parsed.flags.versionId;
         }
+        // --allow-keywords is CLI-only: it unlocks keywords in version-localization updates.
+        let allowKeywords = false;
+        if (KEYWORD_GUARD_TOOLS.has(toolName) && parsed.flags.allowKeywords !== undefined) {
+            allowKeywords = parsed.flags.allowKeywords === true || parsed.flags.allowKeywords === 'true';
+            delete parsed.flags.allowKeywords;
+        }
         const bindCtx: BindContext = { app: parsed.app, versionId: bindVersionId, confirm: parsed.confirm };
 
         const rest = commandPositionals(entry, parsed.positionals);
@@ -109,6 +116,14 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
         const input = checked.data as Record<string, any>;
         if (parsed.limit != null) input.limit = parsed.limit;
         assertWriteInputs(entry.tool.name, input);
+        const keywordIds = keywordTargets(entry.tool.name, input);
+        if (keywordIds.length && !allowKeywords) {
+            return finish(2, '', usageError(
+                `请求会改 ${keywordIds.length} 个 localization 的 keywords（${keywordIds.slice(0, 5).join(', ')}${keywordIds.length > 5 ? ' …' : ''}）。` +
+                '只改 whatsNew/description/promotionalText 时，从 payload 里删掉 keywords 字段，不要把 list 出来的整条记录原样回传；' +
+                '确实要改关键词，加 --allow-keywords。'
+            ));
+        }
 
         const risk = effectiveRisk(entry.tool.name, entry.meta.risk, input);
         const decision = decideSafety({
